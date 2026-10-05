@@ -1,0 +1,52 @@
+# ===================================================================
+# 医院预约挂号系统 · 全局配置
+#
+# 三条纪律（沿用项目 1，都是踩过坑才定下的）：
+#   1. 凭据只走环境变量，默认值留空 —— 不进仓库
+#   2. 配置类文件整份重写，不做片段插入（分片编辑曾导致顶层键重复）
+#   3. 端口与项目 1（8080）错开，两个项目可以同时跑
+# ===================================================================
+server:
+  port: 8081
+
+spring:
+  application:
+    name: hospital-appointment
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  # 统一响应编码，避免中文乱码
+  web:
+    resources:
+      content-type:
+        text/html: text/html;charset=UTF-8
+
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+  sql:
+    init:
+      mode: never        # 由 dev profile 覆盖；测试用 H2 单独指定
+
+app:
+  jwt:
+    # ⚠️ 默认值故意留空：secret 必须由环境变量提供，长度 >= 32 字节
+    #    空值时应用启动即失败，而不是用一个可预测的默认密钥跑起来
+    secret: ${JWT_SECRET:}
+    issuer: hospital-appointment
+    expire-minutes: 120
+    max-failures: 5
+    lock-minutes: 15
+
+  # 挂号业务参数
+  appointment:
+    # 待支付超时时间（分钟）—— 延迟队列用这个值
+    # 测试里会改小（如 5 秒）以便快速验证自动取消
+    payment-timeout-minutes: 15
+
+logging:
+  level:
+    root: INFO
+    com.demo.hospital: INFO

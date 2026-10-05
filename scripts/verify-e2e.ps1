@@ -197,9 +197,36 @@ Check "我的挂号列表" ($null -ne $hit) "total=$($mine.total)，医生=$($hi
 $cancel = & curl.exe -s "$base/api/appointments/$($book.appointmentNo)/cancel" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary '{}' | ConvertFrom-Json
 Check "取消" ($cancel.status -eq 'CANCELLED') "状态=$($cancel.status)"
 
+# ---- 状态机的另外两条路径：模拟支付 -> 就诊完成（决策 D-07）----
+# ⚠️ 为什么这组检查必要：不测它们的话，PAID 与 COMPLETED 在接口层是否可达
+#    就没有任何证据——而"已支付的订单不会被超时误取消"这条演示就讲不完整。
+# ⚠️ 必须用**另一条排班**：这一单会走到 COMPLETED 并一直占用号源，
+#    如果复用 $slot，后面"号源归还"的断言就会读到它的占用而误报失败。
+#    （第一版就是这样错的——实测 21 通过 1 失败，失败的是我自己的断言。）
+$slot2 = (& curl.exe -s "$base/api/schedules?doctorId=$($doc.id)&size=20" -H $authHeader | ConvertFrom-Json).items |
+    Where-Object { $_.remainingSlots -gt 0 -and $_.id -ne $slot.id } | Select-Object -First 1
+
+$bookFile2 = Join-Path $tmp "book2.json"
+[IO.File]::WriteAllText($bookFile2, "{`"scheduleId`":$($slot2.id),`"idempotencyKey`":`"$([guid]::NewGuid())`"}", [Text.UTF8Encoding]::new($false))
+$book2 = & curl.exe -s "$base/api/appointments" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary "@$bookFile2" | ConvertFrom-Json
+
+$paid = & curl.exe -s "$base/api/appointments/$($book2.appointmentNo)/pay" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary '{}' | ConvertFrom-Json
+Check "模拟支付 -> PAID" ($paid.status -eq 'PAID') "状态=$($paid.status)"
+
+# 已支付的订单**不能**被取消（退号涉及退费，本项目不做）
+$codePaidCancel = & curl.exe -s -o NUL -w "%{http_code}" "$base/api/appointments/$($book2.appointmentNo)/cancel" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary '{}'
+Check "已支付不可取消（INVALID_STATE）" ($codePaidCancel -eq '409') "HTTP $codePaidCancel"
+
+$done = & curl.exe -s "$base/api/appointments/$($book2.appointmentNo)/complete" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary '{}' | ConvertFrom-Json
+Check "就诊完成 -> COMPLETED" ($done.status -eq 'COMPLETED') "状态=$($done.status)"
+
+# 终态无出边：已完成的订单不能回退
+$codeDone = & curl.exe -s -o NUL -w "%{http_code}" "$base/api/appointments/$($book2.appointmentNo)/cancel" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary '{}'
+Check "终态不可再取消" ($codeDone -eq '409') "HTTP $codeDone"
+
 $final = (& curl.exe -s "$base/api/schedules?doctorId=$($doc.id)&size=20" -H $authHeader | ConvertFrom-Json).items |
     Where-Object { $_.id -eq $slot.id } | Select-Object -ExpandProperty remainingSlots
-Check "号源归还" ($final -eq $before) "$after -> $final"
+Check "号源归还（该单已取消）" ($final -eq $before) "$after -> $final"
 
 # -------------------------------------------------------------------
 Section "5. 错误分支"

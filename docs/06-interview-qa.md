@@ -364,7 +364,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 ## 八、现场演示（如果让你跑一遍）
 
 ```powershell
-# ① 一键验证全部（98 个测试 + 真实 MySQL 并发 + 前端构建）
+# ① 一键验证全部（106 个测试 + 真实 MySQL 并发 + 前端构建）
 .\run-all-tests.ps1
 
 # ② 起后端
@@ -395,7 +395,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 | 状态机 | 审查任务 6×6 穷举 | 挂号状态机 4×4 穷举 |
 | 第二道防线 | 数据库触发器 + 哈希链 | **数据库唯一索引** |
 | 核心亮点 | 证据对齐（让 AI 错误可检测） | **防超卖**（让并发不破坏数据） |
-| 测试规模 | 280 个 | 98 个 |
+| 测试规模 | 280 个 | 106 个 |
 | 技术栈 | 零构建原生 HTML | **Vue 3 + Vite + Nginx 前后端分离** |
 
 > **共同点**：都是"**不相信，但用工程手段兜住**"。
@@ -430,7 +430,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 
 | 项 | 值 |
 | --- | --- |
-| 测试总数 | **98 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试总数 | **106 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ） |
 | 并发验证（H2 / MySQL） | 1000 线程抢 20 号 → 成功 **20**、剩余 **0**、无负数 |
 | 反向验证（错误实现） | H2 报 `expected 20 but was 64`；MySQL 超卖 **63** 个 |
 | 状态机穷举 | 4×4 = **16 个状态对**，其中合法 **4** 条 |

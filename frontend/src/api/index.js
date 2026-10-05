@@ -139,6 +139,22 @@ export const api = {
   cancel(appointmentNo, reason) {
     return http.post(`/appointments/${appointmentNo}/cancel`, { reason })
   },
+
+  /**
+   * 模拟支付（决策 D-07：不接真实支付）。
+   *
+   * ⚠️ 真实系统里这个动作由**支付平台的回调**触发，前端不会直接调它。
+   *    这里做成显式按钮，是为了让状态机在界面上也能走完
+   *    （否则 PAID 与 COMPLETED 只能靠改数据库才能到，演示时走不通）。
+   */
+  pay(appointmentNo) {
+    return http.post(`/appointments/${appointmentNo}/pay`, { note: '模拟支付回调' })
+  },
+
+  /** 标记已就诊完成（真实系统里通常由 HIS 回调或定时任务推进）。 */
+  complete(appointmentNo) {
+    return http.post(`/appointments/${appointmentNo}/complete`, { note: '就诊完成' })
+  },
   myAppointments(params = {}) {
     return http.get('/appointments', { params })
   }

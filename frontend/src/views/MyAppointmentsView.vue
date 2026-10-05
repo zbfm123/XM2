@@ -26,6 +26,8 @@ const status = ref('')
 const loading = ref(true)
 const error = ref('')
 const cancellingNo = ref(null)
+/** 正在推进状态的单号（两个动作共用，避免按钮重复点）。 */
+const actingNo = ref(null)
 
 /** 状态筛选项。值必须与后端 AppointmentStatus 枚举**逐字一致**。 */
 const statusOptions = [
@@ -109,13 +111,55 @@ async function cancel(row) {
 }
 
 /**
- * 只有"待支付"能取消。
+ * 按钮显隐规则 —— **与后端的状态机严格对应**。
  *
- * 这与后端一致（后端对 PAID 也拒绝：退号涉及退费，而本项目明确不做真实退费）。
- * 前端把按钮藏起来是为了**不让用户点了才知道**——但真正拦住它的是后端。
+ * ⚠️ 前端把按钮藏起来只是为了**不让用户点了才知道**；
+ * 真正拦住非法操作的是后端（状态机 + 带起始状态条件的原子 UPDATE）。
+ * 所以这里的判断标准只有一条：**后端会不会允许**。
+ *
+ * 对应关系（见 AppointmentStatus）：
+ *   PENDING_PAYMENT → 可支付、可取消
+ *   PAID            → 可标记完成；**不可取消**（退号涉及退费，本项目不做真实退费）
+ *   COMPLETED / CANCELLED → 终态，无任何操作
  */
 function canCancel(row) {
   return row.status === 'PENDING_PAYMENT'
+}
+function canPay(row) {
+  return row.status === 'PENDING_PAYMENT'
+}
+function canComplete(row) {
+  return row.status === 'PAID'
+}
+
+/** 调用后端推进状态。action 决定调哪个接口。 */
+async function advance(row, action) {
+  const label = action === 'pay' ? '支付' : '就诊完成'
+  try {
+    await ElMessageBox.confirm(
+      `确认将 ${row.appointmentNo} 标记为「${label}」吗？`,
+      label,
+      { confirmButtonText: `确认${label}`, cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+
+  actingNo.value = row.appointmentNo
+  try {
+    if (action === 'pay') {
+      await api.pay(row.appointmentNo)
+    } else {
+      await api.complete(row.appointmentNo)
+    }
+    ElMessage.success(`已标记为${label}`)
+    await load()
+  } catch (e) {
+    ElMessage.error(e.friendlyMessage || `${label}失败`)
+    await load()
+  } finally {
+    actingNo.value = null
+  }
 }
 </script>
 
@@ -172,8 +216,32 @@ function canCancel(row) {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110">
+        <el-table-column label="操作" width="210">
           <template #default="{ row }">
+            <!--
+              按钮按状态显隐，与后端状态机一一对应。
+              「模拟支付」是刻意保留的演示入口（决策 D-07）：真实系统里这一步
+              由支付平台回调触发。没有它，PAID 与 COMPLETED 在界面上不可达，
+              而"已支付的订单不会被超时误取消"这条也就演示不出来。
+            -->
+            <el-button
+              v-if="canPay(row)"
+              type="primary"
+              size="small"
+              :loading="actingNo === row.appointmentNo"
+              @click="advance(row, 'pay')"
+            >
+              模拟支付
+            </el-button>
+            <el-button
+              v-if="canComplete(row)"
+              type="success"
+              size="small"
+              :loading="actingNo === row.appointmentNo"
+              @click="advance(row, 'complete')"
+            >
+              就诊完成
+            </el-button>
             <el-button
               v-if="canCancel(row)"
               size="small"
@@ -182,7 +250,9 @@ function canCancel(row) {
             >
               取消
             </el-button>
-            <span v-else class="muted">—</span>
+            <span v-if="!canPay(row) && !canComplete(row) && !canCancel(row)" class="muted">
+              {{ row.status === 'CANCELLED' ? '已取消' : '已完成' }}
+            </span>
           </template>
         </el-table-column>
       </el-table>

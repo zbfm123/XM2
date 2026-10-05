@@ -142,7 +142,13 @@ $checks = @(
     @{ Name = '科室列表';    Method = 'GET';  Url = '/api/departments'; Expect = 'id,name';            Auth = $true },
     @{ Name = '当前用户';    Method = 'GET';  Url = '/api/auth/me';     Expect = 'phone';              Auth = $true },
     @{ Name = '我的挂号';    Method = 'GET';  Url = '/api/appointments?page=1&size=5'; Expect = 'items,total,page,size,totalPages'; Auth = $true },
-    @{ Name = '健康检查';    Method = 'GET';  Url = '/api/health';      Expect = 'status';             Auth = $false }
+@{ Name = '健康检查';    Method = 'GET';  Url = '/api/health';      Expect = 'status';             Auth = $false }
+
+    # ⚠️ 模拟支付与就诊完成（决策 D-07）不在这个表里：
+    #    它们需要一张真实订单才能调用，属于"有副作用的接口"，
+    #    由 scripts/verify-e2e.ps1 的完整闭环覆盖（那里会真的挂一单再推进）。
+    #    这里只做**静态**核对——确认前端调用的 api.pay / api.complete 确实定义了，
+    #    那由第 1 节自动覆盖（它扫的是 index.js 里 api 对象的全部方法）。
 )
 
 foreach ($c in $checks) {

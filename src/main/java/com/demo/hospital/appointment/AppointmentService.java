@@ -400,6 +400,90 @@ public class AppointmentService {
     }
 
     // ==================================================================
+    // 支付与就诊（模拟回调，决策 D-07）
+    // ==================================================================
+
+    /**
+     * 推进订单状态：模拟支付回调与就诊完成。
+     *
+     * <h2>为什么需要这个方法（它不在任务书里，是补的）</h2>
+     *
+     * 任务书没列"支付"任务，但文档 D-07 写着"挂号的支付用**模拟回调**"。
+     * 不做的话，状态机里 {@code PAID} 与 {@code COMPLETED} 就是**不可达的**——
+     * 只有测试手动改状态才能到，而那只能证明"状态机枚举内部自洽"，
+     * 证明不了"订单真的能沿着状态机走完"。
+     *
+     * <p>更实际的问题：演示时"15 分钟未支付自动取消"这条链路只讲了一半。
+     * 另一半是**"已支付的订单不会被误取消"**——而如果到不了 {@code PAID}，
+     * 这一半就**演示不出来**。所以这个入口是把那条链路补完整的必要件。
+     *
+     * <h2>为什么是一个通用方法而不是两个</h2>
+     *
+     * 支付（PENDING_PAYMENT → PAID）与就诊完成（PAID → COMPLETED）
+     * 的**执行结构完全相同**：带起始状态的原子 UPDATE、
+     * 受影响行数为 0 说明状态已被别人改过、只做通知不做补偿。
+     * 写成两个方法会复制一遍这个结构，将来改一处忘一处。
+     *
+     * <h2>⚠️ 它绝不能是"任意状态直接改成任意状态"</h2>
+     *
+     * 合法性的唯一判据是状态机的 {@code AppointmentStatus#canTransitionTo}，包括：
+     * <ul>
+     *   <li>不能跳步（PENDING_PAYMENT 不能直接到 COMPLETED）</li>
+     *   <li><b>终态不可变</b>（已取消/已完成的订单不能被回调"复活"）</li>
+     *   <li>不可自环</li>
+     * </ul>
+     * 这三条都由 {@code AppointmentStatusMachineTest} 的穷举测试守着。
+     *
+     * <p>⚠️ 在真实系统里，这个入口必须校验<b>支付平台签名</b>，
+     * 否则任何人构造一个请求就能把订单标记成已支付。本项目的模拟回调
+     * 只在本地演示环境存在（见 docs/02 的 D-07 与 docs/01 的"不做清单"）。
+     *
+     * @return 迁移后的订单视图
+     */
+    @Transactional(noRollbackFor = BusinessException.class)
+    public AppointmentView advanceStatus(Long userId, String appointmentNo,
+                                         AppointmentStatus target, String note) {
+        Appointment appointment = appointmentMapper.findByNoAndUser(appointmentNo, userId);
+        if (appointment == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "挂号单不存在：" + appointmentNo);
+        }
+
+        AppointmentStatus from = appointment.getStatus();
+
+        // 幂等：已经是目标状态就直接返回（回调被重投是常态）
+        if (from == target) {
+            log.info("状态已是目标值，按幂等成功处理: no={} status={}", appointmentNo, target);
+            return viewOf(userId, appointmentNo, true);
+        }
+
+        // 合法性由状态机裁决，这里不重复实现规则
+        if (!from.canTransitionTo(target)) {
+            throw new BusinessException(ErrorCode.INVALID_STATE,
+                    "不允许的状态变更：" + from + " → " + target);
+        }
+
+        int changed = appointmentMapper.transitionStatus(appointment.getId(), from, target, note);
+        if (changed == 0) {
+            // 在"读"与"改"之间状态变了（并发）。重新读一次判断目标是否已达成。
+            Appointment latest = appointmentMapper.findByNoAndUser(appointmentNo, userId);
+            if (latest != null && latest.getStatus() == target) {
+                log.info("并发推进，按幂等成功处理: no={} status={}", appointmentNo, target);
+                return viewOf(userId, appointmentNo, true);
+            }
+            throw new BusinessException(ErrorCode.INVALID_STATE,
+                    "订单状态已变更，请刷新后重试");
+        }
+
+        // ⚠️ 已知取舍：这条状态变更**不发通知**。
+        //    本项目只定义了 BOOKED / CANCELLED / REMINDER 三种通知类型，
+        //    没有"已支付/已完成"。硬塞进 BOOKED 会让通知文案与实际发生的事对不上，
+        //    而那比"少发一条通知"更糟——收到"预约成功"的人会以为重复预约了。
+        log.info("订单状态已推进: no={} {} → {}", appointmentNo, from, target);
+
+        return viewOf(userId, appointmentNo, false);
+    }
+
+    // ==================================================================
     // T-009 我的挂号列表
     // ==================================================================
 

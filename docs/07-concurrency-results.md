@@ -17,7 +17,7 @@
 $env:DB_PASSWORD = "123456"
 .\scripts\verify-concurrency-on-mysql.ps1
 
-# 方式二：连 98 个测试与前端构建一起跑
+# 方式二：连 106 个测试与前端构建一起跑
 .\run-all-tests.ps1
 ```
 

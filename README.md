@@ -124,7 +124,7 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 | --- | --- |
 | `.\run-dev.ps1` | **一键启动后端**：先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚，再启动 |
 | `.\run-dev.ps1 -CheckOnly` | 只检查环境、不启动（快速确认"这台机器能不能跑"） |
-| `.\run-all-tests.ps1` | **一键跑完全部验证**：98 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
+| `.\run-all-tests.ps1` | **一键跑完全部验证**：106 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
 | `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
 | `.\scripts\check-api-contract.ps1` | **前后端 API 契约检查**：前端调用的方法是否都已定义、接口是否真能打通、返回字段是否齐全（需后端在跑）|
@@ -259,6 +259,8 @@ UNIQUE KEY uk_schedule_slot (doctor_id, work_date, period)      -- 防重复排�
 | `POST` | `/api/appointments` | 需令牌 | 200 | **提交挂号**。body：`{scheduleId, idempotencyKey}`；幂等键**必填** |
 | `POST` | `/api/appointments/{no}/cancel` | 需令牌 | 200 | 取消挂号并**归还号源**；body 可选 `{reason}` |
 | `GET` | `/api/appointments?status=&page=&size=` | 需令牌 | 200 | 我的挂号（**只能看到自己的**） |
+| `POST` | `/api/appointments/{no}/pay` | 需令牌 | 200 | **模拟支付回调**（决策 D-07，见下方说明） |
+| `POST` | `/api/appointments/{no}/complete` | 需令牌 | 200 | 标记已就诊完成（`PAID → COMPLETED`）|
 
 > `GET /api/schedules` 的分页 **`page` 从 1 开始**；`from` / `to` 为 `yyyy-MM-dd`，可选；
 > `size` 默认 10、上限 100。返回 `{items, total, page, size, totalPages}`。
@@ -387,7 +389,8 @@ mvn test
 | `AppointmentBookingIntegrationTest` | 15 | 幂等 + 取消归还 + 越权隔离（A-04 / A-05） |
 | `MqUnavailableDoesNotBreakBookingTest` | 4 | **MQ 挂了挂号仍成功**（A-07） |
 | `PaymentTimeoutIntegrationTest` | 4 | **延迟队列自动取消**（A-06）——**需要真实 broker** |
-| **合计** | **98 个，全绿** | |
+| `AppointmentLifecycleIntegrationTest` | 8 | **状态机在接口层真的能走完**（支付/完成/终态不可复活/越权）|
+| **合计** | **106 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。

@@ -3,6 +3,7 @@ package com.demo.hospital.appointment;
 import com.demo.hospital.appointment.domain.AppointmentStatus;
 import com.demo.hospital.appointment.dto.AppointmentView;
 import com.demo.hospital.appointment.dto.BookRequest;
+import com.demo.hospital.appointment.dto.AdvanceRequest;
 import com.demo.hospital.appointment.dto.CancelRequest;
 import com.demo.hospital.auth.domain.CurrentUser;
 import com.demo.hospital.common.PageResult;
@@ -89,6 +90,57 @@ public class AppointmentController {
                 ? "用户主动取消"
                 : request.reason().trim();
         return ResponseEntity.ok(appointmentService.cancel(userId, appointmentNo, reason));
+    }
+
+    /**
+     * 模拟支付回调（决策 D-07：不接真实支付）。
+     *
+     * <h2>为什么需要它（它不在任务书里，是补的）</h2>
+     *
+     * 任务书没列支付任务，但没有这个入口，状态机里的 {@code PAID} 与
+     * {@code COMPLETED} 就是**不可达的**——只有测试手动改库才能到。
+     *
+     * <p>更要紧的是演示：「15 分钟未支付自动取消」这条链路只讲了一半。
+     * 另一半是**"已支付的订单不会被误取消"**，而如果到不了 {@code PAID}，
+     * 这一半就演示不出来。
+     *
+     * <p>⚠️ **真实系统里这个端点绝不能长这样**：必须校验支付平台的签名与金额，
+     * 否则任何人构造一个请求就能把订单标记成已支付。
+     * 本项目的支付是主动砍掉的（docs/01 的"不做清单"），
+     * 这个端点只在本地演示环境存在，且命名上直接叫 {@code pay}（模拟）。
+     */
+    @PostMapping("/{appointmentNo}/pay")
+    public ResponseEntity<AppointmentView> pay(
+            @PathVariable("appointmentNo") String appointmentNo,
+            @RequestBody(required = false) AdvanceRequest request) {
+        Long userId = CurrentUser.require().getUserId();
+        String note = (request == null || request.note() == null || request.note().isBlank())
+                ? "模拟支付回调"
+                : request.note().trim();
+        return ResponseEntity.ok(appointmentService.advanceStatus(
+                userId, appointmentNo, AppointmentStatus.PAID, note));
+    }
+
+    /**
+     * 标记已就诊完成（{@code PAID → COMPLETED}）。
+     *
+     * <p>它是状态机里唯一还能往前走的一步，也是"终态无出边"那条不变量的
+     * 正向对照：走完这一步之后，订单就再也变不了了（不能取消、不能回退）。
+     *
+     * <p>真实系统里这一步通常由 HIS（医院信息系统）的对接回调触发，
+     * 或由定时任务扫描"就诊日期已过的 PAID 订单"批量推进。这里同样做成显式端点，
+     * 便于演示与测试。
+     */
+    @PostMapping("/{appointmentNo}/complete")
+    public ResponseEntity<AppointmentView> complete(
+            @PathVariable("appointmentNo") String appointmentNo,
+            @RequestBody(required = false) AdvanceRequest request) {
+        Long userId = CurrentUser.require().getUserId();
+        String note = (request == null || request.note() == null || request.note().isBlank())
+                ? "就诊完成"
+                : request.note().trim();
+        return ResponseEntity.ok(appointmentService.advanceStatus(
+                userId, appointmentNo, AppointmentStatus.COMPLETED, note));
     }
 
     /**

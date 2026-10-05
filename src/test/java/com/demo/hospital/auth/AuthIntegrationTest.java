@@ -462,6 +462,77 @@ class AuthIntegrationTest {
     }
 
     /**
+     * 请求方法不被支持（例如用 GET 打一个 POST 端点）。
+     *
+     * <p>⚠️ 这条是补的，因为原来的行为是 <b>500 "服务器内部错误"</b>——
+     * 而"方法用错了"是调用方的问题，正确状态码是 <b>405</b>。
+     *
+     * <p>它是被边界值探测发现的（用 GET 打 {@code /api/auth/login}）。
+     * 与"缺参数返回 500"、"路径不存在返回 500"是同一类问题的第三次出现：
+     * 少写一个 {@code @ExceptionHandler}，异常就掉进
+     * {@code @ExceptionHandler(Exception.class)} 兜底。
+     * <b>兜底处理器保证不漏堆栈，但它把一切归因成"服务端崩了"。</b>
+     */
+    @Test
+    @DisplayName("请求方法不被支持返回 405（不是 500）——方法用错是调用方的问题")
+    void wrongHttpMethodShouldReturn405() throws Exception {
+        // /api/auth/login 只接受 POST
+        mockMvc.perform(get("/api/auth/login"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+
+        // /api/departments 只接受 GET
+        register(phone, TEST_ACCOUNT_SECRET);
+        String token = loginAndGetToken(phone, TEST_ACCOUNT_SECRET);
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/departments").header("Authorization", "Bearer " + token))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+    }
+
+    /**
+     * 容器层的错误也必须用统一格式。
+     *
+     * <p>这类请求**到不了控制器**（路径匹配不上），Spring Boot 会转发到 {@code /error}。
+     * 默认的 {@code BasicErrorController} 会返回它自己的格式
+     * （{@code {timestamp, status, error, path}}），
+     * 于是同一个 API 出现两种错误格式——而"前端只需要一套解析逻辑"
+     * 正是本项目追求的目标。
+     *
+     * <p>现在由 {@code UnifiedErrorController} 接管，格式与其它错误一致。
+     */
+    @Test
+    @DisplayName("容器层错误（空路径变量）也用统一格式，不是 Spring 默认格式")
+    void containerLevelErrorUsesUnifiedFormat() throws Exception {
+        register(phone, TEST_ACCOUNT_SECRET);
+        String token = loginAndGetToken(phone, TEST_ACCOUNT_SECRET);
+
+        // 空路径变量：匹配不上任何 handler，于是被转发到 /error。
+        //
+        // ⚠️ 这里**不断言具体是 400 还是 404**：真实 Tomcat 上返回 400，
+        //    而 MockMvc 会把 "//" 规范化成 "/"，于是变成 404（找不到 /api/appointments/cancel）。
+        //    两者都走 /error，本测试要守的是**格式统一**，不是某个具体状态码——
+        //    把断言绑死在状态码上只会让测试对容器的路径规范化行为敏感。
+        var response = mockMvc.perform(post("/api/appointments//cancel")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andReturn().getResponse();
+
+        assertThat(response.getStatus())
+                .as("应当是 4xx（而不是 5xx：路径问题不该表现为服务端崩了）")
+                .isBetween(400, 499);
+
+        String body = response.getContentAsString();
+
+        assertThat(body)
+                .as("必须是统一错误格式（含 code/message/time），而不是 Spring 默认的 timestamp/error")
+                .contains("\"code\"")
+                .contains("\"time\"")
+                .doesNotContain("\"timestamp\"");
+    }
+
+    /**
      * 请求不存在的接口路径。
      *
      * <p>⚠️ 这条是补的，因为原来的行为是 <b>500 "服务器内部错误"</b>——

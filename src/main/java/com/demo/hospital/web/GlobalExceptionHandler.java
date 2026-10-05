@@ -13,6 +13,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -87,6 +88,7 @@ public class GlobalExceptionHandler {
             case INVALID_PARAMETER -> HttpStatus.BAD_REQUEST;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case INVALID_STATE, NO_SLOTS_AVAILABLE, ALREADY_BOOKED -> HttpStatus.CONFLICT;
+            case METHOD_NOT_ALLOWED -> HttpStatus.METHOD_NOT_ALLOWED;
         };
 
         // 这些是预期内的业务分支（有人抢不到号是正常的），用 INFO 而不是 ERROR：
@@ -137,6 +139,34 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(base(ErrorCode.INVALID_PARAMETER.name(),
                         "缺少必填参数：" + e.getParameterName(), request));
+    }
+
+    /**
+     * 请求方法不被支持，例如用 {@code GET} 打一个 {@code POST} 端点。
+     *
+     * <p>⚠️ 这个分支是补上的，之前会掉进兜底变成 <b>500 "服务器内部错误"</b>——
+     * 但**方法用错了是调用方的问题**，正确状态码是 <b>405</b>。
+     *
+     * <p>它是**第三次**出现同一类问题：
+     * <ol>
+     *   <li>缺必填参数 → 曾是 500，应为 400</li>
+     *   <li>路径不存在 → 曾是 500，应为 404</li>
+     *   <li>方法不支持（本处）→ 曾是 500，应为 405</li>
+     * </ol>
+     * 三次都是"少写一个 {@code @ExceptionHandler}，异常掉进
+     * {@code @ExceptionHandler(Exception.class)} 兜底"。
+     * <b>兜底处理器保证不会漏出堆栈，但它会把一切归因成"服务端崩了"。</b>
+     *
+     * <p>发现方式：边界值探测时用 {@code GET} 打 {@code /api/auth/login}，
+     * 拿到的是 500 而不是 405。
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotSupported(
+            HttpRequestMethodNotSupportedException e, HttpServletRequest request) {
+        log.info("请求方法不支持: {} {} -> {}", request.getMethod(), request.getRequestURI(), e.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(base(ErrorCode.METHOD_NOT_ALLOWED.name(),
+                        "请求方法不被支持：" + request.getMethod(), request));
     }
 
     /**

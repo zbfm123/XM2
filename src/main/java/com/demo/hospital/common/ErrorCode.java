@@ -20,6 +20,8 @@ public enum ErrorCode {
     INVALID_STATE,
     /** 号源已满——挂号场景里最需要被单独识别的一个错误。 */
     NO_SLOTS_AVAILABLE,
-    /** 该排班已挂过号（命中 {@code (user_id, schedule_id)} 唯一索引）。 */
-    ALREADY_BOOKED
+    /** 该排班已挂过号（命中活跃订单唯一索引）。 */
+    ALREADY_BOOKED,
+    /** 请求方法不被支持（例如用 GET 打一个 POST 端点）。 */
+    METHOD_NOT_ALLOWED
 }

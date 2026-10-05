@@ -12,7 +12,7 @@
 | 阶段 | **Day 1 ~ Day 3 主体全部完成**（T-001 ~ T-017；仅剩 T-019 收尾） |
 | 当前任务 | **T-019 文档定稿**（其余任务已完成；T-018 压测按文档主动砍掉） |
 | 截止 | **2026-10-07** |
-| 测试 | **110 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试 | **112 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
 | 最后验证 | 2026-10-05：`scripts/verify-e2e.ps1` **18 项全通过**（A-09 + A-10，经真实 Nginx）；A-07 用**真 broker 停机**验证 8 项全通过 |
 | 环境 | MySQL / Redis / RabbitMQ **三者均可用**（RabbitMQ 待服务化，见下） |
 
@@ -120,6 +120,74 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 ---
 
 ## 已完成
+
+### 2026-10-05：方法不支持的 405、以及容器层错误的格式统一
+
+**发现方式：边界值探测。**（这类问题单测发现不了——单测都打正常路径。）
+
+#### 问题一：方法用错返回 500，应为 405
+
+用 `GET` 打 `POST /api/auth/login`，拿到的是 **500 "服务器内部错误"**。
+
+根因：Spring 抛 `HttpRequestMethodNotSupportedException`，而这个异常没有专门的
+处理器，掉进了 `@ExceptionHandler(Exception.class)` 兜底。
+
+> ⚠️ **这已经是同一类问题的第三次出现**：
+>
+> | # | 场景 | 曾返回 | 应为 |
+> | --- | --- | --- | --- |
+> | 1 | 缺必填参数 | 500 | 400 |
+> | 2 | 路径不存在 | 500 | 404 |
+> | 3 | 方法不支持（本次） | 500 | 405 |
+>
+> 三次都是"少写一个 `@ExceptionHandler`，异常掉进兜底"。
+> **兜底处理器保证不会漏出堆栈，但它会把一切归因成"服务端崩了"** ——
+> 而这三件事都是**调用方的问题**，报 500 会让排查方向完全错位
+> （用户去查服务端日志，真正的原因在他的 URL/参数/方法上）。
+>
+> 这也说明：**兜底分支是一把双刃剑**。它让系统"看起来不会崩"，
+> 代价是掩盖了本该被区分的四类错误。
+
+#### 问题二：容器层错误用了 Spring 默认格式
+
+`POST /api/appointments//cancel`（空路径变量）返回的是：
+
+```json
+{"timestamp":"...","status":400,"error":"Bad Request","path":"..."}
+```
+
+而其它所有错误都是 `{code, message, path, time}`。
+
+根因：这类请求**匹配不上任何 handler**，Spring Boot 把它转发到 `/error`，
+由默认的 `BasicErrorController` 处理——**它绕过了 `GlobalExceptionHandler`**。
+
+**两个后果**：
+1. 同一个 API 出现**两种错误格式**，而"前端只需要一套解析逻辑"
+   正是 `GlobalExceptionHandler` 明确追求的目标；
+2. 默认控制器**会把原始异常消息放进响应体**，而本项目刻意对 5xx 返回泛化文案
+   （异常细节可能含表名、SQL 片段、文件路径）——**默认控制器不受这条纪律约束**。
+
+**修法**：新增 `UnifiedErrorController` 接管 `/error`，
+把状态码翻译成同一套 `{code, message, path, time}`，且 5xx 不带原始消息。
+
+#### 验证（7 项全通过）
+
+| 请求 | 状态码 | 格式 |
+| --- | --- | --- |
+| `GET /api/auth/login`（应为 POST） | **405** | 统一 ✅ |
+| `DELETE /api/departments`（应为 GET） | **405** | 统一 ✅ |
+| `POST /api/appointments//cancel`（空变量） | 400 | 统一 ✅ |
+| 不存在的路径（无令牌） | 401 | 统一 ✅ |
+| 不存在的 api（有令牌） | 404 | 统一 ✅ |
+| 缺必填参数 | 400 | 统一 ✅ |
+| `page=0` | 400 | 统一 ✅ |
+
+新增两条回归测试（`AuthIntegrationTest`，共 25 个用例）。
+
+> 写第二条测试时踩了个小坑：MockMvc 会把 `//` 规范化成 `/`，
+> 于是变成 404 而不是真实 Tomcat 上的 400。
+> 所以断言写成"**是 4xx 且格式统一**"，而不是绑死某个状态码——
+> 那条测试要守的是**格式**，不是某个具体数字。
 
 ### 2026-10-05：取消的并发竞态（用户取消 vs 超时自动取消）
 
@@ -516,7 +584,7 @@ expected: 9
 | 脚本 | 作用 |
 | --- | --- |
 | `run-dev.ps1` | 一键启动后端；先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚；`-CheckOnly` 只检查不启动 |
-| `run-all-tests.ps1` | 一键跑完 110 个测试 + 真实 MySQL 并发验证 + 前端构建，并打印汇总 |
+| `run-all-tests.ps1` | 一键跑完 112 个测试 + 真实 MySQL 并发验证 + 前端构建，并打印汇总 |
 | `scripts/start-nginx.ps1` | 启动/停止 Nginx；自动按端口选配置、检查产物与后端、检查语法、打印访问地址 |
 
 三个脚本都带 UTF-8 BOM 并**实测通过**。实现时刻意避开两个已踩过的坑：

@@ -283,6 +283,7 @@ UNIQUE KEY uk_schedule_slot (doctor_id, work_date, period)      -- 防重复排�
 | 409 | `NO_SLOTS_AVAILABLE` | **号源已约满**（前端据此把按钮显示成"已约满"而不是"操作失败"） |
 | 409 | `ALREADY_BOOKED` | 同一患者对同一排班已有**活跃**订单 |
 | 409 | `INVALID_STATE` | 当前状态不允许该操作（如已完成的挂号不能取消） |
+| 405 | `METHOD_NOT_ALLOWED` | 请求方法不被支持（如用 GET 打 POST 端点）|
 
 **已知错误响应**（统一格式 `{code, message, path, time}`）：
 
@@ -380,7 +381,7 @@ mvn test
 
 | 测试类 | 用例数 | 说明 |
 | --- | --- | --- |
-| `AuthIntegrationTest` | 23 | 认证链路（A-01）+ 不存在路径返回 404 |
+| `AuthIntegrationTest` | 25 | 认证链路（A-01）+ 404/405/容器层统一格式 |
 | `AuthServiceTest` | 7 | 注册/锁定分支（含并发注册） |
 | `SysUserMapperTest` | 4 | 唯一索引真的会拦 |
 | `CatalogQueryIntegrationTest` | 13 | 科室/医生/排班查询（A-02） |
@@ -392,7 +393,7 @@ mvn test
 | `ConcurrentCancelIntegrationTest` | 2 | **取消的并发竞态**：用户取消与超时取消同时发生，状态只变一次、号源恰好归还一次 |
 | `ConcurrentIdempotencyIntegrationTest` | 2 | **幂等的并发边界**：8 个并发请求只扣 1 个号源（防号源泄漏）|
 | `AppointmentLifecycleIntegrationTest` | 8 | **状态机在接口层真的能走完**（支付/完成/终态不可复活/越权）|
-| **合计** | **110 个，全绿** | |
+| **合计** | **112 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。

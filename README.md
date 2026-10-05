@@ -484,6 +484,30 @@ curl.exe -u guest:guest -X DELETE "http://localhost:15672/api/queues/%2F/appoint
 > 与 `payment-ttl-millis: 2000`，然后**删掉 delay 队列**再启动。
 > 只改一个会让它们分家。集成测试用的就是这个组合。
 
+#### ⚠️ 队列与交换机名都可配置（测试隔离需要）
+
+| 配置 | 默认值 | 测试用值 |
+| --- | --- | --- |
+| `app.mq.notify-queue` | `appointment.notify.queue` | `...queue.test` |
+| `app.mq.delay-queue` | `appointment.delay.queue` | `...queue.test` |
+| `app.mq.cancel-queue` | `appointment.cancel.queue` | `...queue.test` |
+| `app.mq.appointment-exchange` | `appointment.exchange` | `...exchange.test` |
+| `app.mq.delay-exchange` | `appointment.delay.exchange` | `...exchange.test` |
+| `app.mq.dead-letter-exchange` | `appointment.dlx` | `...dlx.test` |
+
+**为什么交换机名也必须可配置**：曾经只隔离了队列，交换机是硬编码共享的。
+结果是测试消息经过同一个交换机，被**同时路由到 `.test` 队列与开发队列**——
+开发队列里于是堆满"超时测试医生"的消息。功能不受影响，
+但演示时打开管理台，真正要讲的三个队列会被测试消息淹掉。
+
+> 教训：**只隔离队列、不隔离交换机等于没隔离**，而"半套隔离"更危险——
+> 跑测试不再报错，人会以为已经隔离了，于是不再去看管理台。
+
+> ⚠️ **改队列/交换机名或 TTL 之后必须删掉旧的**：AMQP 不允许修改已存在队列的
+> 参数（`x-dead-letter-exchange`、`x-message-ttl` 都不行），
+> 否则启动会报 `PRECONDITION_FAILED - inequivalent arg` 并反复重连。
+> 删掉后应用会按新配置重建。
+
 ### 开关与降级（这是 A-07 的落点）
 
 | 配置 | 行为 |

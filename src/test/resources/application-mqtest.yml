@@ -76,6 +76,18 @@ app:
     notify-queue: appointment.notify.queue.test
     delay-queue: appointment.delay.queue.test
     cancel-queue: appointment.cancel.queue.test
+    # ⚠️ 交换机名也必须换成 .test —— 只隔离队列是不够的。
+    #
+    # 原来这三个是硬编码常量，于是测试消息经过**共享交换机**，
+    # 而那个交换机上同时绑着 dev 队列与 .test 队列：
+    # 一条测试消息被路由到**两个地方**，dev 队列里于是堆满测试消息。
+    #
+    # 实测：跑一遍全量测试，dev 的 notify/cancel 队列会多出十几条
+    # "超时测试医生"的消息。功能不受影响，但演示时要打开管理台看这几个队列——
+    # 一堆测试消息会把真正要讲的三个队列淹掉。
+    appointment-exchange: appointment.exchange.test
+    delay-exchange: appointment.delay.exchange.test
+    dead-letter-exchange: appointment.dlx.test
 
 logging:
   level:

@@ -73,6 +73,8 @@ class NotificationDeliveryIntegrationTest {
 
     /** 与 application-mqtest.yml 一致；必须与 QueueNameConfig 读到的值相同。 */
     private static final String TEST_NOTIFY_QUEUE = "appointment.notify.queue.test";
+    private static final String TEST_DELAY_QUEUE = "appointment.delay.queue.test";
+    private static final String TEST_CANCEL_QUEUE = "appointment.cancel.queue.test";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
@@ -118,6 +120,16 @@ class NotificationDeliveryIntegrationTest {
         doctor.setTitle("主任医师");
         doctorMapper.insert(doctor);
         doctorId = doctor.getId();
+        // ⚠️ 清理队列放在 **@BeforeEach**，不是只在 @AfterEach。
+        //
+        // 原因：TTL 对齐到 2 秒之后，延迟消息会在**测试类结束后的间隙**里
+        // 死信转发（测试上下文已销毁、消费者不在），于是它滞留在队列里。
+        // @AfterEach 已经跑完了，挡不住这种"测试结束后才到达"的消息。
+        //
+        // 放在 @BeforeEach 才是可靠的：**保证每次开始都是干净状态**，
+        // 而"上轮残留"与"本轮结束后的残留"都被下一次开始时清掉。
+        // 这也让失败重跑不会受到上一轮残留消息的干扰。
+        purgeTestQueues();
     }
 
     @AfterEach
@@ -136,6 +148,17 @@ class NotificationDeliveryIntegrationTest {
         if (departmentId != null) {
             departmentMapper.deleteById(departmentId);
         }
+
+        // ⚠️ 还要清掉队列里的消息。
+        //
+        // 本类用的是与 PaymentTimeoutIntegrationTest 相同的 *.test 队列，
+        // 而消费者只在测试上下文存活期间存在。**不清就会永久堆积**——
+        // 上一个类清了队列，这个类又把消息留下，下一个类之前都没人清。
+        //
+        // 为什么是 purge 而不是 delete：见 PaymentTimeoutIntegrationTest 上的说明——
+        // 删除队列会制造"删除 → 重新声明"的窗口，此时投递的消息
+        // 路由不到队列、被静默丢弃（那个坑已经踩过一次）。
+        purgeTestQueues();
     }
 
     // ------------------------------------------------------------------
@@ -266,5 +289,28 @@ class NotificationDeliveryIntegrationTest {
     private String uniquePhone() {
         long n = Math.abs(System.nanoTime() % 100_000_000L);
         return "139" + String.format("%08d", n);
+    }
+/**
+     * 清空测试用的三个队列。
+     *
+     * <p><b>为什么 before 和 after 都要调</b>：TTL 对齐到 2 秒后，延迟消息可能在
+     * <b>测试类结束后的间隙</b>里才死信转发（那时测试上下文已销毁、消费者不在，
+     * 于是一直滞留）。{@code @AfterEach} 挡不住这种"测试结束后才到达"的消息。
+     * 放在 {@code @BeforeEach} 才可靠——**保证每次开始都是干净状态**，
+     * 而且失败重跑不会受上一轮残留消息干扰。
+     *
+     * <p><b>为什么是 purge 而不是 delete</b>：删除队列会制造
+     * "删除 → 重新声明"的窗口，此时投递的消息在 exchange 上找不到绑定、
+     * 会被<b>静默丢弃</b>。这个坑已经踩过一次（整个测试类一起跑必定失败）。
+     * 清空内容不动实体，是安全的做法。
+     */
+    private void purgeTestQueues() {
+        for (String q : new String[]{TEST_NOTIFY_QUEUE, TEST_DELAY_QUEUE, TEST_CANCEL_QUEUE}) {
+            try {
+                rabbitAdmin.purgeQueue(q);
+            } catch (Exception e) {
+                // 队列不存在（例如 broker 不可达、整个测试被跳过）——忽略
+            }
+        }
     }
 }

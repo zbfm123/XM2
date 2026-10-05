@@ -80,6 +80,11 @@ public class RabbitTopologyConfig {
     // 通知（T-010）
     // ------------------------------------------------------------------
 
+    /**
+     * ⚠️ 这里是**默认值**，实际用的是 {@code app.mq.appointment-exchange}。
+     * 交换机名必须可配置，否则测试与开发**无法隔离**——
+     * 详见 MqProperties 里的说明（半套隔离比不隔离更糟）。
+     */
     public static final String APPOINTMENT_EXCHANGE = "appointment.exchange";
     /** ⚠️ 队列名由 app.mq.notify-queue 决定（见 MqProperties）——测试要能用独立队列。 */
     public static final String ROUTING_CREATED = "appointment.created";
@@ -94,7 +99,7 @@ public class RabbitTopologyConfig {
         // durable=true：broker 重启后交换机还在。
         // autoDelete=false：不能因为"暂时没有队列绑定"就自动删掉——
         // 那会在服务重启的空窗期把交换机弄丢。
-        return new TopicExchange(APPOINTMENT_EXCHANGE, true, false);
+        return new TopicExchange(mqProperties.appointmentExchange(), true, false);
     }
 
     @Bean
@@ -125,7 +130,7 @@ public class RabbitTopologyConfig {
 
     @Bean
     public DirectExchange delayExchange() {
-        return new DirectExchange(DELAY_EXCHANGE, true, false);
+        return new DirectExchange(mqProperties.delayExchange(), true, false);
     }
 
     /**
@@ -148,7 +153,7 @@ public class RabbitTopologyConfig {
                 //    负 TTL 的队列会让消息**立刻**过期，表现为"下单后秒取消"。
                 //    所以这里先卡住范围，而不是让溢出去制造一个诡异的现象。
                 .ttl(toTtlMillis())
-                .deadLetterExchange(DLX)
+                .deadLetterExchange(mqProperties.deadLetterExchange())
                 .deadLetterRoutingKey(ROUTING_CANCEL)
                 .build();
     }
@@ -160,7 +165,7 @@ public class RabbitTopologyConfig {
 
     @Bean
     public DirectExchange deadLetterExchange() {
-        return new DirectExchange(DLX, true, false);
+        return new DirectExchange(mqProperties.deadLetterExchange(), true, false);
     }
 
     @Bean

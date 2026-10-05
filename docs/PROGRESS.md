@@ -121,6 +121,76 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：MQ **测试与开发只隔离了一半**（队列隔离了，交换机没有）
+
+**顺着队列残留查出来的第三个问题**，也是根因最实在的一个。
+
+#### 现象
+
+给测试加上队列清理之后，我以为干净了。但跑完测试看管理台：
+
+```
+[appointment.notify.queue]   消息=9     <- 开发队列，本该是 0
+[appointment.delay.queue]    消息=6
+[appointment.cancel.queue]   消息=3
+```
+
+消息体里是 `"doctorName":"超时测试医生"`——**是测试产生的**。
+
+#### 根因：交换机是共享的
+
+管理台的绑定列表说明了问题：
+
+```
+appointment.exchange  --[appointment.created]-->  appointment.notify.queue
+appointment.exchange  --[appointment.created]-->  appointment.notify.queue.test   ← 同一个交换机
+```
+
+三个交换机名原来是**硬编码常量**（`RabbitTopologyConfig.APPOINTMENT_EXCHANGE` 等）。
+于是：测试把消息发到**共享交换机**，而那个交换机上同时绑着 dev 队列与 `.test` 队列，
+**一条测试消息被路由到两个地方**：
+
+- `.test` 队列 → 测试的消费者处理（正常）
+- 开发队列 → 测试跑完后没人消费，**永久滞留**
+
+> **只隔离了队列、没隔离交换机，等于没隔离。**
+> 而"半套隔离"比完全不隔离更糟——因为跑测试时不再报错，
+> 人会以为已经隔离了，于是不再去看管理台。
+
+#### 修法
+
+把三个交换机名也变成配置项（`app.mq.appointment-exchange` /
+`delay-exchange` / `dead-letter-exchange`），测试配置用 `.test` 后缀。
+这样测试用**一整套独立的交换机 + 队列**。
+
+**改的过程中踩了个坑，正好印证了本项目反复强调的那条约束**：
+
+```
+PRECONDITION_FAILED - inequivalent arg 'x-dead-letter-exchange'
+for queue 'appointment.delay.queue.test':
+received 'appointment.dlx.test' but current is 'appointment.dlx'
+```
+
+旧的 `.test` 队列是用旧参数建的，而**队列参数不能改**——
+必须先删掉队列和交换机，让它们按新配置重建。（这已经是第三次踩"队列参数固化"了。）
+
+#### 验证
+
+| 检查 | 修前 | 修后 |
+| --- | --- | --- |
+| `.test` 队列绑在哪个交换机 | **开发交换机** | ✅ `.test` 交换机 |
+| 跑一遍全量测试后开发队列 | 十几条测试消息 | ✅ **全 0** |
+| 开发路径是否仍正常 | — | ✅ 下单成功、通知落库 1 条、延迟消息进 dev 队列、两个消费者就绪 |
+
+测试数保持 **117 个全绿**。
+
+> **这一串问题的共同根源**：
+> 从"测试里没有消费者"（假绿）→"MQ 打开时没测过"→"交换机共享"，
+> 三个问题都指向同一件事：**MQ 相关的验证一直没有被当成一等公民对待**。
+> 每次都是修了一个，下一个才露出来。
+> 而发现它们的入口，一开始只是一个看起来无关紧要的现象——
+> **测试队列里堆着没人消费的消息**。
+
 ### 2026-10-05：补上一个结构性覆盖缺口 —— MQ 打开时消费者没人测
 
 **顺着"假绿"那条线往下查，发现了同源的第二个缺口。**

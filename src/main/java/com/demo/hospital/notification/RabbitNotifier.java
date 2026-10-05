@@ -1,5 +1,6 @@
 package com.demo.hospital.notification;
 
+import com.demo.hospital.config.MqProperties;
 import com.demo.hospital.config.RabbitTopologyConfig;
 import com.demo.hospital.notification.mq.NotificationMessage;
 import org.slf4j.Logger;
@@ -49,19 +50,33 @@ public class RabbitNotifier implements Notifier {
 
     private final RabbitTemplate rabbitTemplate;
 
-    public RabbitNotifier(RabbitTemplate rabbitTemplate) {
+    /**
+     * 交换机名从配置读，而不是用 {@code RabbitTopologyConfig} 里的常量。
+     *
+     * <p>⚠️ 这一步是**测试隔离的必要条件**。原来这里写的是
+     * {@code RabbitTopologyConfig.APPOINTMENT_EXCHANGE}（硬编码），
+     * 于是出现：测试把消息发到**共享交换机**，而那个交换机上同时绑着
+     * dev 队列与 {@code .test} 队列 —— 一条测试消息被路由到**两个地方**，
+     * dev 队列里于是堆满"超时测试医生"的消息。
+     *
+     * <p>只隔离队列、不隔离交换机，等于没隔离。
+     */
+    private final MqProperties mqProperties;
+
+    public RabbitNotifier(RabbitTemplate rabbitTemplate, MqProperties mqProperties) {
         this.rabbitTemplate = rabbitTemplate;
+        this.mqProperties = mqProperties;
     }
 
     @Override
     public boolean notifyBooked(NotificationMessage message) {
-        return publish(RabbitTopologyConfig.APPOINTMENT_EXCHANGE,
+        return publish(mqProperties.appointmentExchange(),
                 RabbitTopologyConfig.ROUTING_CREATED, message, "挂号成功通知");
     }
 
     @Override
     public boolean notifyCancelled(NotificationMessage message) {
-        return publish(RabbitTopologyConfig.APPOINTMENT_EXCHANGE,
+        return publish(mqProperties.appointmentExchange(),
                 RabbitTopologyConfig.ROUTING_CANCELLED, message, "取消通知");
     }
 
@@ -74,7 +89,7 @@ public class RabbitNotifier implements Notifier {
      */
     @Override
     public boolean schedulePaymentTimeout(String appointmentNo) {
-        return publish(RabbitTopologyConfig.DELAY_EXCHANGE,
+        return publish(mqProperties.delayExchange(),
                 RabbitTopologyConfig.ROUTING_DELAY, appointmentNo, "超时取消调度");
     }
 

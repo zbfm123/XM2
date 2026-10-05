@@ -149,11 +149,32 @@ if (affected == 0) {
 即使应用层判断出问题，也不允许数据不一致：
 
 ```sql
-UNIQUE KEY uk_appointment_idem (idempotency_key)      -- 防重复提交
-UNIQUE KEY uk_appointment_user_schedule (user_id, schedule_id)  -- 防同一人抢两个号
+UNIQUE KEY uk_appointment_idem (idempotency_key)              -- 防重复提交
+UNIQUE KEY uk_appointment_active_slot (dedup_key, schedule_id) -- 防同一人对同一排班有两个**活跃**订单
 ```
 
 **应用层是"让用户看到友好提示"，唯一索引是"保证数据一定正确"。**
+
+> ⚠️ **第二个索引不是朴素的 `(user_id, schedule_id)`，这一点踩过坑，别改回去。**
+>
+> 最初就是那么写的，T-007 的测试立刻暴露了它的错误：
+> **"取消后无法重新挂同一个号"**——已取消的那条记录仍然占着 `(user_id, schedule_id)`，
+> 数据库拒绝新建，用户看到"您已挂过该排班"，而他的号早就取消了。
+>
+> 正确的业务语义是"同一排班**同时只能有一个活跃订单**"，
+> 而不是"历史上只能挂过一次"。所以用一列**生成列**表达：
+>
+> ```sql
+> dedup_key BIGINT AS (IF(status = 'CANCELLED', NULL, user_id)) STORED
+> ```
+>
+> 活跃订单 `dedup_key = user_id`（参与唯一性），已取消为 `NULL`
+> （MySQL 的 UNIQUE 允许多个 NULL，天然不参与约束）。
+> **"防并发重复下单"这个真正需要数据库保证的能力一点没丢**，
+> 同时把"取消后可以重挂"这个正常业务路径还给了用户。
+>
+> 这条经验值得记住：**唯一索引约束的语义如果不是业务真正想要的，
+> 它就会变成一道拦错人的防线。**
 
 ---
 

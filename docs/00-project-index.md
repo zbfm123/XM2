@@ -34,6 +34,7 @@
 | **新技术学习清单** | [05-learning-plan.md](05-learning-plan.md) |
 | 进度与踩坑 | [PROGRESS.md](PROGRESS.md) |
 | **面试问答（带着这个去面试）** | [06-interview-qa.md](06-interview-qa.md) |
+| **并发验证结果（T-018）** | [07-concurrency-results.md](07-concurrency-results.md) |
 
 ---
 

@@ -498,6 +498,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-concurrency-on-mysql.p
 | 新技术学习清单（三样新技术的最小集） | [docs/05-learning-plan.md](docs/05-learning-plan.md) |
 | **进度与踩坑**（真实状态，不美化） | [docs/PROGRESS.md](docs/PROGRESS.md) |
 | **面试问答**（30 秒版本 + 20 个必问问题的答法与证据） | [docs/06-interview-qa.md](docs/06-interview-qa.md) |
+| **并发验证结果**（可复现命令 + 实测数字 + 诚实边界） | [docs/07-concurrency-results.md](docs/07-concurrency-results.md) |
 
 ---
 

@@ -3,6 +3,12 @@
 #
 # 数据库：hospital_appointment（独立库，不污染项目 1 的 contract_review）
 # 连接凭据走环境变量，真实值放在 gitignored 的 application-local.yml
+#
+# ⚠️ 编辑纪律：**这个文件只允许有一个顶层 spring: 和一个顶层 app:**
+#    曾经因为"在文件末尾追加一段 app: / spring:" 而写成两个顶层键，
+#    启动时 snakeyaml 直接抛 DuplicateKeyException
+#    （报错信息只说 "while constructing a mapping"，不会告诉你哪一行重复）。
+#    要加配置就并进对应的段里，不要另起一段。
 # ===================================================================
 spring:
   datasource:
@@ -26,6 +32,25 @@ spring:
       encoding: UTF-8
       continue-on-error: false
 
+  # -----------------------------------------------------------------
+  # RabbitMQ（T-010）
+  #
+  # 凭据：guest/guest 只允许本机连接，正好够本地开发用。
+  # 环境变量可覆盖，真实凭据不要进仓库。
+  # -----------------------------------------------------------------
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    # 连不上时快速失败，不要在启动阶段长时间挂住。
+    connection-timeout: 5s
+    listener:
+      simple:
+        # 消费失败不无限重投：消费者自己 catch 并记日志（见 NotificationConsumer）。
+        # 对"通知"这类尽力而为的动作，丢掉一条远比堵住整个队列好。
+        default-requeue-rejected: false
+
 # MyBatis-Plus
 mybatis-plus:
   configuration:
@@ -38,6 +63,23 @@ mybatis-plus:
       logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
+# -------------------------------------------------------------------
+# 应用配置
+# -------------------------------------------------------------------
+app:
+  # RabbitMQ 开关（T-010 / T-011）
+  #
+  # dev 环境默认**打开**：本机 broker 已装好并在跑（D:\rabbitmq）。
+  #
+  # ⚠️ 要验证 A-07（MQ 不可用时挂号仍然成功），把它设为 false 再启动：
+  #    主流程应当完全不受影响，只是不再产生通知记录。
+  #    这条路径**也是测试默认走的路径**（test profile 不设这个值为 true），
+  #    所以"MQ 关闭时一切正常"是被每个 mvn test 持续验证的。
+  mq:
+    enabled: ${MQ_ENABLED:true}
+    # 与 app.appointment.payment-timeout-minutes 保持一致（15 分钟）
+    payment-ttl-millis: 900000
 
 logging:
   level:

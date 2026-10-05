@@ -8,6 +8,8 @@ import com.demo.hospital.appointment.mapper.AppointmentRow;
 import com.demo.hospital.common.BusinessException;
 import com.demo.hospital.common.ErrorCode;
 import com.demo.hospital.common.PageResult;
+import com.demo.hospital.notification.Notifier;
+import com.demo.hospital.notification.mq.NotificationMessage;
 import com.demo.hospital.schedule.domain.Schedule;
 import com.demo.hospital.schedule.mapper.ScheduleMapper;
 import org.slf4j.Logger;
@@ -37,10 +39,14 @@ public class AppointmentService {
 
     private final AppointmentMapper appointmentMapper;
     private final ScheduleMapper scheduleMapper;
+    private final Notifier notifier;
 
-    public AppointmentService(AppointmentMapper appointmentMapper, ScheduleMapper scheduleMapper) {
+    public AppointmentService(AppointmentMapper appointmentMapper,
+                              ScheduleMapper scheduleMapper,
+                              Notifier notifier) {
         this.appointmentMapper = appointmentMapper;
         this.scheduleMapper = scheduleMapper;
+        this.notifier = notifier;
     }
 
     // ==================================================================
@@ -165,6 +171,38 @@ public class AppointmentService {
             throw new BusinessException(ErrorCode.ALREADY_BOOKED, "该挂号已存在");
         }
 
+        // ---- ⑥ 通知与超时调度：尽力而为（决策 D-06 / 验收 A-07） ----
+        //
+        // ⚠️ 这里是本项目**最容易被写错的一处**，值得把话说透。
+        //
+        // 【为什么放在扣号源与建订单**之后**】
+        //   如果先发消息再扣号源，那么"消息发出去了但号源扣失败"会让用户
+        //   收到一条"预约成功"的通知，而实际上他没挂上号。
+        //   通知是对**已完成的事实**的描述，所以必须在事实确立之后发生。
+        //
+        // 【为什么 notifier 内部一定要吞掉异常】
+        //   用户已经挂上号了：号源扣了、订单建了。这时候 broker 连不上，
+        //   是"通知发不出去"，不是"挂号失败"。
+        //   把这两件事混在一起的结果就是——**MQ 一抖动，用户就挂不上号**。
+        //   这正是 A-07 要验证的纪律，也是与项目 1"AI 挂了规则不受影响"的同一种思路。
+        //
+        // 【为什么不做成强一致（本地消息表 + 发布确认）】
+        //   那属于"必须送达"才值得的复杂度。通知在本项目里是尽力而为：
+        //   发不出去就记 error 日志等补偿，绝不能让一条通知决定一笔挂号能否成立。
+        //
+        // ⚠️ 已知边界（面试主动交代）：消息在事务提交前发出，因此存在一个极小的窗口——
+        //   消息已投递但事务随后回滚，消费者会为一张不存在的订单写通知。
+        //   彻底解决要"事务提交后再发"（本地消息表或 TransactionSynchronization），
+        //   本期时间不允许，已在 docs/PROGRESS.md 记为已知限制。
+        boolean notified = tryNotifyBooked(appointment, schedule);
+        boolean scheduled = tryScheduleTimeout(appointment.getAppointmentNo());
+
+        if (!notified || !scheduled) {
+            // 只记日志，**不改业务结果**。返回给用户的仍然是"挂号成功"。
+            log.error("挂号成功但异步投递未完全成功（业务不受影响，待补偿）: no={} notified={} scheduled={}",
+                    appointment.getAppointmentNo(), notified, scheduled);
+        }
+
         return viewOf(userId, appointment.getAppointmentNo(), false);
     }
 
@@ -257,6 +295,20 @@ public class AppointmentService {
                     appointmentNo, appointment.getScheduleId());
         }
 
+        // ---- 通知：尽力而为，与下单同一条纪律（A-07） ----
+        // 同样在业务动作**之后**发，且失败不影响取消结果。
+        boolean cancelNotified;
+        try {
+            cancelNotified = notifier.notifyCancelled(toCancelledMessage(appointment));
+        } catch (Exception e) {
+            // 与下单同一条纪律：实现违约抛异常，也不能拖垮取消
+            log.error("取消通知投递抛出异常（已兜住，业务不受影响）: no={}", appointmentNo, e);
+            cancelNotified = false;
+        }
+        if (!cancelNotified) {
+            log.error("取消成功但通知投递失败（业务不受影响，待补偿）: no={}", appointmentNo);
+        }
+
         // 用统一出口回显，保证"取消"的响应里也带医生名与科室名
         return viewOf(userId, appointmentNo, false);
     }
@@ -324,6 +376,71 @@ public class AppointmentService {
                 ? e.getMostSpecificCause().getMessage()
                 : e.getMessage();
         return message != null && message.contains("uk_appointment_idem");
+    }
+
+    /**
+     * 投递挂号通知，<b>把 Notifier 可能抛出的任何异常都挡住</b>。
+     *
+     * <h2>为什么 Notifier 自己已经 try/catch 了，这里还要再挡一层</h2>
+     *
+     * 这是<b>第二道防线</b>，与号源的唯一索引、状态机的条件 UPDATE 是同一种思路：
+     * 接口上写着"绝不抛异常"是一条<b>约定</b>，而约定靠人遵守，人会漏。
+     * 框架代码（{@code RabbitTemplate}、连接池）抛的正是异常。
+     *
+     * <p>而这一层兜底的成本是几行代码，收益是
+     * <b>A-07 从"取决于实现者记得 catch"变成"无论实现怎么写都成立"</b>。
+     *
+     * <p>⚠️ 这个判断不是空想的：T-011 的测试用了"总是抛异常"的桩，
+     * 在只有第一道防线时<b>立刻把挂号打挂了</b>——说明这条兜底是必需的。
+     *
+     * @return 是否投递成功；<b>任何异常都返回 false，绝不向外抛</b>
+     */
+    private boolean tryNotifyBooked(Appointment appointment, Schedule schedule) {
+        try {
+            return notifier.notifyBooked(toBookedMessage(appointment, schedule));
+        } catch (Exception e) {
+            log.error("通知投递抛出异常（已兜住，业务不受影响）: no={}",
+                    appointment.getAppointmentNo(), e);
+            return false;
+        }
+    }
+
+    /** 投递超时调度，同样兜住一切异常。理由见 {@link #tryNotifyBooked}。 */
+    private boolean tryScheduleTimeout(String appointmentNo) {
+        try {
+            return notifier.schedulePaymentTimeout(appointmentNo);
+        } catch (Exception e) {
+            log.error("超时调度投递抛出异常（已兜住，业务不受影响）: no={}", appointmentNo, e);
+            return false;
+        }
+    }
+    /**
+     * 组装"挂号成功"的通知消息。
+     *
+     * <p>把医生名与科室名一并放进消息（而不是只给订单号让消费者回查），
+     * 是为了<b>解耦</b>：消费者不必知道订单表长什么样，拿到消息就能干活。
+     * 理由详见 {@code NotificationMessage} 的注释。
+     */
+    private NotificationMessage toBookedMessage(Appointment a, Schedule s) {
+        // 医生名/科室名从读模型取（它已经 JOIN 好了），而不是再加两个 Mapper 依赖
+        AppointmentRow row = appointmentMapper.findRowByNoAndUser(a.getAppointmentNo(), a.getUserId());
+        return new NotificationMessage(
+                a.getAppointmentNo(), a.getUserId(),
+                row == null ? null : row.doctorName(),
+                row == null ? null : row.departmentName(),
+                String.valueOf(a.getVisitDate()), a.getPeriod(),
+                NotificationMessage.TYPE_BOOKED);
+    }
+
+    /** 组装"已取消"的通知消息。名字同样来自读模型。 */
+    private NotificationMessage toCancelledMessage(Appointment a) {
+        AppointmentRow row = appointmentMapper.findRowByNoAndUser(a.getAppointmentNo(), a.getUserId());
+        return new NotificationMessage(
+                a.getAppointmentNo(), a.getUserId(),
+                row == null ? null : row.doctorName(),
+                row == null ? null : row.departmentName(),
+                String.valueOf(a.getVisitDate()), a.getPeriod(),
+                NotificationMessage.TYPE_CANCELLED);
     }
 
     /**

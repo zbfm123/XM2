@@ -40,6 +40,16 @@ app:
     max-failures: 5
     lock-minutes: 15
 
+  # RabbitMQ（T-010）
+  mq:
+    # ⚠️ 默认关闭。这样 mvn test 与"没装 RabbitMQ 的机器"都能正常启动与开发。
+    #    打开方式（dev profile 已默认打开，见 application-dev.yml）
+    enabled: false
+    # 延迟队列 TTL：15 分钟。测试里会改短（如 2 秒）以快速验证"到期自动取消"——
+    # 一条要等 15 分钟的测试，没有人会去跑它。
+    payment-ttl-millis: 900000
+    max-retries: 3
+
   # 挂号业务参数
   appointment:
     # 待支付超时时间（分钟）—— 延迟队列用这个值

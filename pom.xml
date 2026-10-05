@@ -47,18 +47,21 @@
         </dependency>
 
         <!--
-          ⚠️ 刻意先不加 spring-boot-starter-amqp。
+          ⚠️ T-010 才加进来的依赖。
 
-          理由：本机 RabbitMQ 尚未安装，加了它应用启动时会尝试自动配置连接池，
-          在没有 broker 的情况下会产生噪音甚至启动失败——
+          为什么不在 T-001 就加：本机 RabbitMQ 当时没装，加了它应用启动时会尝试
+          自动配置连接工厂，在没有 broker 的情况下会产生噪音甚至启动失败——
           而 T-001 的目标是"骨架能跑起来"。
 
-          另外这也正好是本项目的需求 A-07：
-          **MQ 不可用时挂号必须仍然成功**。所以"先在没有 MQ 的环境下把业务跑通"
-          不是妥协，而是刻意的开发顺序。
-
-          T-010 接入 MQ 时再加这个依赖。
+          另一层理由更重要，也是本项目的需求 A-07：
+          **MQ 不可用时挂号必须仍然成功**。
+          所以"先在没有 MQ 的环境下把业务跑通"不是妥协，而是刻意的开发顺序：
+          如果一开始就有 MQ，就很难发现自己不知不觉把主流程和 MQ 绑在了一起。
         -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
 
         <!-- 持久层 -->
         <dependency>

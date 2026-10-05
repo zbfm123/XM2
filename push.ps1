@@ -74,11 +74,12 @@ Write-Step 2 "检查文件 BOM"
 # 这个方向我踩了两次，第二次是因为编辑器保存时把 BOM 去掉了——
 # 所以必须用脚本兜住，不能靠人记得。
 $ps1MissingBom = @()
-Get-ChildItem -Path $PSScriptRoot -File -Filter *.ps1 -ErrorAction SilentlyContinue |
+Get-ChildItem -Path $PSScriptRoot -Recurse -File -Filter *.ps1 -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '\\target\\|\\node_modules\\|\\.git\\' } |
     ForEach-Object {
         $b = [System.IO.File]::ReadAllBytes($_.FullName)
         $hasBom = ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
-        if (-not $hasBom) { $ps1MissingBom += $_.Name }
+        if (-not $hasBom) { $ps1MissingBom += $_.FullName.Replace($PSScriptRoot + '\', '') }
     }
 
 if ($ps1MissingBom.Count -gt 0) {
@@ -86,7 +87,7 @@ if ($ps1MissingBom.Count -gt 0) {
     $ps1MissingBom | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
     Write-Host ""
     Write-Host "修复（在仓库根目录执行，把每个文件替换一遍）：" -ForegroundColor Yellow
-    Write-Host '    Get-ChildItem *.ps1 | ForEach-Object {' -ForegroundColor Yellow
+    Write-Host '    Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {' -ForegroundColor Yellow
     Write-Host '        $t = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($_))' -ForegroundColor Yellow
     Write-Host '        [System.IO.File]::WriteAllText($_, $t, (New-Object System.Text.UTF8Encoding($true)))' -ForegroundColor Yellow
     Write-Host '    }' -ForegroundColor Yellow

@@ -42,7 +42,7 @@ function Write-Step($text) {
 }
 
 # -------------------------------------------------------------------
-Write-Step "1/3  后端测试（98 个，H2 内存库）"
+Write-Step "1/4  后端测试（98 个，H2 内存库）"
 
 & mvn -B test 2>&1 | Select-String -Pattern "Tests run:.*Skipped: \d+$|BUILD" | Select-Object -Last 4
 
@@ -69,10 +69,10 @@ if (Test-Path $reportDir) {
 
 # -------------------------------------------------------------------
 if ($SkipMysql) {
-    Write-Step "2/3  真实 MySQL 并发验证（已跳过 -SkipMysql）"
+    Write-Step "2/4  真实 MySQL 并发验证（已跳过 -SkipMysql）"
     $results["MySQL 并发验证"] = "跳过"
 } else {
-    Write-Step "2/3  真实 MySQL 并发验证（A-03 第二处证据）"
+    Write-Step "2/4  真实 MySQL 并发验证（A-03 第二处证据）"
     $env:DB_PASSWORD = $DbPassword
     & powershell -ExecutionPolicy Bypass -File ".\scripts\verify-concurrency-on-mysql.ps1" 2>&1 |
         Select-Object -Last 30
@@ -88,10 +88,10 @@ if ($SkipMysql) {
 
 # -------------------------------------------------------------------
 if ($SkipFrontend) {
-    Write-Step "3/3  前端构建（已跳过 -SkipFrontend）"
+    Write-Step "3/4  前端构建（已跳过 -SkipFrontend）"
     $results["前端构建"] = "跳过"
 } elseif (Test-Path "frontend\node_modules") {
-    Write-Step "3/3  前端构建（Vite）"
+    Write-Step "3/4  前端构建（Vite）"
     Push-Location frontend
     & npm.cmd run build 2>&1 | Select-String -Pattern "built in|error|Error|dist/" | Select-Object -Last 8
     Pop-Location
@@ -103,9 +103,21 @@ if ($SkipFrontend) {
         $failed++
     }
 } else {
-    Write-Step "3/3  前端构建（前端依赖未安装）"
+    Write-Step "3/4  前端构建（前端依赖未安装）"
     Write-Host "先在 frontend 目录执行：npm.cmd install" -ForegroundColor Yellow
     $results["前端构建"] = "跳过（需先 npm.cmd install）"
+}
+
+# -------------------------------------------------------------------
+Write-Step "4/4  文档一致性（测试数量 / 脚本引用 / BOM / 过时措辞）"
+
+& powershell -ExecutionPolicy Bypass -File ".\scripts\check-docs.ps1" 2>&1 | Select-Object -Last 12
+
+if ($LASTEXITCODE -eq 0) {
+    $results["文档一致性"] = "通过"
+} else {
+    $results["文档一致性"] = "有**不一致**（见上方）"
+    $failed++
 }
 
 # -------------------------------------------------------------------

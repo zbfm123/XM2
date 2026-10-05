@@ -115,9 +115,10 @@ mysql -uroot -p123456 -e "CREATE DATABASE IF NOT EXISTS hospital_appointment DEF
 | --- | --- |
 | `.\run-dev.ps1` | **一键启动后端**：先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚，再启动 |
 | `.\run-dev.ps1 -CheckOnly` | 只检查环境、不启动（快速确认"这台机器能不能跑"） |
-| `.\run-all-tests.ps1` | **一键跑完全部验证**：98 个后端测试 + 真实 MySQL 并发验证 + 前端构建 |
+| `.\run-all-tests.ps1` | **一键跑完全部验证**：98 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
 | `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
+| `.\scripts\check-docs.ps1` | **文档一致性检查**：测试数量、README 引用的脚本是否存在、`.ps1` 的 BOM、过时措辞 |
 | `.\scripts\verify-e2e.ps1` | **端到端验收**：起后端与 Nginx、验证静态资源与完整业务闭环、自动收尾清理（A-09 + A-10，18 项）|
 | `.\scripts\verify-concurrency-on-mysql.ps1` | 单独跑 A-03 的真实 MySQL 并发验证 |
 | `.\scripts\install-rabbitmq-service.ps1` | 把 RabbitMQ 注册成自启动服务（**需管理员权限**） |

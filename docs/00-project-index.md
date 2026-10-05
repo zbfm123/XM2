@@ -12,11 +12,11 @@
 | --- | --- |
 | 位置 | `D:\xmdeepseek\hospital-appointment` |
 | 期限 | **2026-10-07 前**（3 天） |
-| 技术栈 | Spring Boot 3.3.5 / Java 21 / MyBatis-Plus / MySQL 8 / Redis / **RabbitMQ 4.1.8** / **Vue 3**（未开始）/ **Nginx 1.22.0**（未配置） |
+| 技术栈 | Spring Boot 3.3.5 / Java 21 / MyBatis-Plus / MySQL 8 / **RabbitMQ 4.1.8** / **Vue 3**（✅ 已完成）/ **Nginx 1.22.0**（✅ 已配置并验证）<br>⚠️ **Redis 只引入了依赖，主代码一处没用**——别照背成"我用了 Redis"（见 [02-architecture.md](02-architecture.md) 的"关于 Redis"）|
 | 核心亮点 | **防止号源超卖**（并发扣减） |
 | 部署方式 | 前后端分离，Nginx 托管前端 + 反向代理后端 |
 | **当前进度** | **T-001 ~ T-017 已完成**，**117 个测试全绿**；验收 **A-01 ~ A-10 全部通过** |
-| **下一步** | T-019 文档定稿（面试问答已写好）；演示前注意 **80 端口被 Steam++ 占用** |
+| **下一步** | T-019 收尾（README / 面试问答 / 干净机器复现已定稿）；想验证"真能跑"跑 `scripts\verify-clean-start.ps1` |
 
 > ⚠️ 详细的实时状态只看 [START-HERE.md](START-HERE.md) 与 [PROGRESS.md](PROGRESS.md)，
 > 本节的"当前进度"是快照。

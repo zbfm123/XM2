@@ -118,6 +118,7 @@ mysql -uroot -p123456 -e "CREATE DATABASE IF NOT EXISTS hospital_appointment DEF
 | `.\run-all-tests.ps1` | **一键跑完全部验证**：98 个后端测试 + 真实 MySQL 并发验证 + 前端构建 |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
 | `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
+| `.\scripts\verify-e2e.ps1` | **端到端验收**：起后端与 Nginx、验证静态资源与完整业务闭环、自动收尾清理（A-09 + A-10，18 项）|
 | `.\scripts\verify-concurrency-on-mysql.ps1` | 单独跑 A-03 的真实 MySQL 并发验证 |
 | `.\scripts\install-rabbitmq-service.ps1` | 把 RabbitMQ 注册成自启动服务（**需管理员权限**） |
 | `.\push.ps1 -Message "..."` | 提交前检查（BOM 守卫 + 敏感信息扫描）并推送 |

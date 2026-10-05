@@ -127,6 +127,7 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 | `.\run-all-tests.ps1` | **一键跑完全部验证**：106 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
 | `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
+| `.\scripts\verify-clean-start.ps1` | **干净机器复现验证**：真的删库删产物，再照本文档走一遍到端到端验收（6 个阶段）|
 | `.\scripts\check-api-contract.ps1` | **前后端 API 契约检查**：前端调用的方法是否都已定义、接口是否真能打通、返回字段是否齐全（需后端在跑）|
 | `.\scripts\check-docs.ps1` | **文档一致性检查**：测试数量、README 引用的脚本是否存在、`.ps1` 的 BOM、过时措辞 |
 | `.\scripts\verify-e2e.ps1` | **端到端验收**：起后端与 Nginx、验证静态资源与完整业务闭环、自动收尾清理（A-09 + A-10，18 项）|
@@ -204,6 +205,43 @@ curl.exe -s http://localhost:8081/api/health
 ```
 
 ---
+
+## 四点五、干净机器复现（一条命令验证本文档真的能照做）
+
+新 clone 下来、或者想确认"照 README 到底能不能跑起来"，跑这一条：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-clean-start.ps1
+```
+
+它会**真的把数据库 `DROP` 掉、把 `frontend\dist` 删掉**（模拟新机器），然后严格按本文档的顺序走：
+
+| 阶段 | 检查什么 |
+| --- | --- |
+| 0 前置检查 | JDK / Maven / Node / MySQL（缺了明确说是哪个）|
+| 1 破坏状态 | 删库、删前端产物 |
+| 2 自动建库与启动 | 后端起来、**库被自动创建**、预置数据 5/10/140/1 全对、演示账号能登录、**启动日志无 ERROR** |
+| 3 全量测试 | `mvn test` 全绿（会先停掉 dev 后端，避免与测试争用 broker）|
+| 4 前端构建 | `npm.cmd run build` 出得来产物 |
+| 5 端到端 | 经 Nginx 跑 A-09 + A-10（22 项）|
+
+**实测 6 个阶段全部通过**（后端 8 秒启动，含建库建表）。
+
+> ⚠️ **为什么要写成脚本，而不是"我手工试过了"**：
+> "干净机器能复现"这句话如果由人来断言，它**不可复现**——换个时间、换个人，
+> 没人知道当时到底删了什么、跳过了哪一步。
+> 更要紧的是：人做这件事时会**无意识地绕过障碍**
+> （"这步我记得要改一下配置"），恰好把最该发现的问题遮住了。
+> **脚本不会绕过任何东西：README 缺一步，它就失败。**
+
+### 选项
+
+| 参数 | 作用 |
+| --- | --- |
+| `-SkipTests` | 跳过全量测试（调试用，会快很多）|
+| `-SkipFrontend` | 跳过前端构建与端到端验证 |
+| `-KeepData` | 不清理测试订单 |
+| `-NginxPort 80` | 用 80 端口的 Nginx 配置（本机被占用，默认 8080）|
 
 ## 五、数据库初始化
 

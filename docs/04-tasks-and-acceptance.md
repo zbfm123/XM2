@@ -42,7 +42,7 @@
 | T-018 并发验证与压测（可选） | ✅ 可复现部分完成 | 并发**正确性**已有 H2 + 真实 MySQL 两处证据 + 反向验证；结果与复现命令记在 [07](07-concurrency-results.md)。**压测按文档主动砍掉**（详见该文第五节）|
 | T-019 文档定稿 | 🟡 进行中 | README / 规格文档已同步；面试问答待补 |
 
-**当前测试总数：115 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ）。
+**当前测试总数：117 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ）。
 
 > **任务书之外补的一项**：`POST /api/appointments/{no}/pay`（模拟支付回调）与
 > `/complete`。任务书没列支付任务，但 `docs/02` 的 D-07 说支付用模拟回调，

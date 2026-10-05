@@ -386,6 +386,7 @@ mvn test
 | `SysUserMapperTest` | 4 | 唯一索引真的会拦 |
 | `CatalogQueryIntegrationTest` | 13 | 科室/医生/排班查询（A-02） |
 | `AppointmentStatusMachineTest` | 23 | **状态机穷举 16 个状态对**（A-08） |
+| `NotificationDeliveryIntegrationTest` | 2 | **MQ 可用时通知真的落库**（投递→消费→落库三段）——需要真实 broker |
 | `ScheduleConcurrencyTest` | 5 | **1000 线程抢 20 号，恰好 20 单**（A-03） |
 | `AppointmentBookingIntegrationTest` | 15 | 幂等 + 取消归还 + 越权隔离（A-04 / A-05） |
 | `MqUnavailableDoesNotBreakBookingTest` | 4 | **MQ 挂了挂号仍成功**（A-07） |
@@ -394,7 +395,7 @@ mvn test
 | `ConcurrentCancelIntegrationTest` | 2 | **取消的并发竞态**：用户取消与超时取消同时发生，状态只变一次、号源恰好归还一次 |
 | `ConcurrentIdempotencyIntegrationTest` | 2 | **幂等的并发边界**：8 个并发请求只扣 1 个号源（防号源泄漏）|
 | `AppointmentLifecycleIntegrationTest` | 8 | **状态机在接口层真的能走完**（支付/完成/终态不可复活/越权）|
-| **合计** | **115 个，全绿** | |
+| **合计** | **117 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。

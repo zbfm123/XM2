@@ -446,7 +446,21 @@ mvn test
 > 这样没有 broker 的机器跑全量测试依然全绿。
 > 但跳过会打印明确提示，**不静默**：静默跳过会让人以为功能测过了。
 
-### A-03 的第二处证据：真实 MySQL
+### A-03 的三处证据各自挡什么
+
+| 层次 | 脚本 / 测试 | 挡的是哪一类"看起来对" |
+| --- | --- | --- |
+| **SQL 层** | `ScheduleConcurrencyTest`（H2，`mvn test` 就能跑）| 原子 UPDATE 的**写法**是否真的原子 |
+| **数据库层** | `scripts\verify-concurrency-on-mysql.ps1` | H2 的锁实现与 **InnoDB 不同**——只跑 H2 是拿近似实现替代真实实现 |
+| **部署层** | `scripts\verify-multi-instance.ps1` | **JVM 锁在多实例下无效**——这一处决定这个设计有没有价值 |
+| **接口层** | `ConcurrentBookingHttpIntegrationTest` | 单条 SQL 原子 ≠ **整条业务链路**正确（事务、幂等、唯一索引、补偿）|
+
+> **为什么要分四层**：每一层能发现的错误类型不同。
+> 最能说明这一点的是"部署层"——**单实例的并发测试对"多实例超卖"是盲的**，
+> 因为单实例下应用层判断恰好是对的。
+> **一个测试能通过，不代表它能发现对应类型的错误。**
+
+### A-03 的证据（二）：数据库层 —— 真实 MySQL
 
 并发正确性**必须在真实 MySQL 上再验一次**：本项目依赖 InnoDB 的行锁，而 H2 的锁实现与它不同。
 
@@ -467,7 +481,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-concurrency-on-mysql.p
 **H2 与 MySQL 有方言差异**，涉及 MySQL 特有写法的地方（原子 UPDATE、唯一索引冲突、
 生成列）必须**在真实 MySQL 上再手工验证一次**。
 
-### A-03 的第三处证据：多实例部署
+### A-03 的证据（三）：部署层 —— 多实例
 
 **这一处最关键**——防超卖的价值恰恰在多实例：如果只在单实例上成立，
 用 `synchronized` 就够了，根本不需要那条原子 SQL。

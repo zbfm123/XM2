@@ -187,7 +187,7 @@ UNIQUE KEY uk_schedule_slot (doctor_id, work_date, period)      -- 防重复排�
 
 ## 六、已实现接口
 
-**当前可用**（T-003 已完成，验收 A-01 已通过）：
+**当前可用**（T-003 ~ T-012 已完成；验收 A-01 ~ A-08 已通过）：
 
 | 方法 | 路径 | 鉴权 | 成功状态码 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -198,21 +198,31 @@ UNIQUE KEY uk_schedule_slot (doctor_id, work_date, period)      -- 防重复排�
 | `GET` | `/api/departments` | 需令牌 | 200 | 科室列表（**数组**，字典数据不分页） |
 | `GET` | `/api/doctors?deptId=` | 需令牌 | 200 | 该科室医生列表，**含 `departmentName`**；`deptId` 必填 |
 | `GET` | `/api/schedules?doctorId=&from=&to=&page=&size=` | 需令牌 | 200 | 排班（号源）分页，**含 `remainingSlots` 与 `soldOut`** |
+| `POST` | `/api/appointments` | 需令牌 | 200 | **提交挂号**。body：`{scheduleId, idempotencyKey}`；幂等键**必填** |
+| `POST` | `/api/appointments/{no}/cancel` | 需令牌 | 200 | 取消挂号并**归还号源**；body 可选 `{reason}` |
+| `GET` | `/api/appointments?status=&page=&size=` | 需令牌 | 200 | 我的挂号（**只能看到自己的**） |
 
 > `GET /api/schedules` 的分页 **`page` 从 1 开始**；`from` / `to` 为 `yyyy-MM-dd`，可选；
 > `size` 默认 10、上限 100。返回 `{items, total, page, size, totalPages}`。
+>
+> `POST /api/appointments` 返回体里的 **`replayed`** 字段区分"新建"与"幂等重放"：
+> `false` = 本次真的创建了订单，`true` = 这个订单早就存在、只是把原来那单还给你。
+> **刻意用 200 而不是 201**——重放时并没有创建任何东西。
 
 安全策略是**默认拒绝**（`SecurityConfig`）：白名单只有 `/api/auth/register`、`/api/auth/login`、
 `/api/health`、`/error`，**其余新接口自动受保护**，未登记的路径默认 401。
 （科室/医生/排班虽然不是敏感数据，也同样要求登录——**不做"只读数据就放行"的例外**，
 那正是最容易在后续改动里漏掉的一块。）
 
-**错误码补充分支**（T-004 新增）：
+**错误码补充分支**（T-004 起新增）：
 
 | 状态码 | code | 触发条件 |
 | --- | --- | --- |
-| 404 | `NOT_FOUND` | **科室 / 医生不存在**——与"存在但没有数据"的 **200 空列表**刻意区分开 |
+| 404 | `NOT_FOUND` | **科室 / 医生 / 挂号单不存在**——与"存在但没有数据"的 **200 空列表**刻意区分开 |
 | 400 | `INVALID_PARAMETER` | 缺少必填参数（如 `/api/doctors` 不带 `deptId`）、`page<1` |
+| 409 | `NO_SLOTS_AVAILABLE` | **号源已约满**（前端据此把按钮显示成"已约满"而不是"操作失败"） |
+| 409 | `ALREADY_BOOKED` | 同一患者对同一排班已有**活跃**订单 |
+| 409 | `INVALID_STATE` | 当前状态不允许该操作（如已完成的挂号不能取消） |
 
 **已知错误响应**（统一格式 `{code, message, path, time}`）：
 
@@ -308,26 +318,100 @@ $env:JAVA_HOME = "D:\java\jdk-21"
 mvn test
 ```
 
-| 测试类 | 用例数 |
+| 测试类 | 用例数 | 说明 |
+| --- | --- | --- |
+| `AuthIntegrationTest` | 22 | 认证链路（A-01） |
+| `AuthServiceTest` | 7 | 注册/锁定分支（含并发注册） |
+| `SysUserMapperTest` | 4 | 唯一索引真的会拦 |
+| `CatalogQueryIntegrationTest` | 13 | 科室/医生/排班查询（A-02） |
+| `AppointmentStatusMachineTest` | 23 | **状态机穷举 16 个状态对**（A-08） |
+| `ScheduleConcurrencyTest` | 5 | **1000 线程抢 20 号，恰好 20 单**（A-03） |
+| `AppointmentBookingIntegrationTest` | 15 | 幂等 + 取消归还 + 越权隔离（A-04 / A-05） |
+| `MqUnavailableDoesNotBreakBookingTest` | 4 | **MQ 挂了挂号仍成功**（A-07） |
+| `PaymentTimeoutIntegrationTest` | 4 | **延迟队列自动取消**（A-06）——**需要真实 broker** |
+| **合计** | **97 个，全绿** | |
+
+**默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
+内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。
+这是"干净机器可复现"（N-04）的一部分。
+
+> ⚠️ **`PaymentTimeoutIntegrationTest` 是唯一需要真实 broker 的**（TTL 到期后的死信转发
+> 是 broker 行为，H2 + 桩测不出来）。它用独立 profile `mqtest`（TTL 改成 1 秒），
+> 并用 `Assumptions` **探测 broker：不可达时跳过而不是失败**——
+> 这样没有 broker 的机器跑全量测试依然全绿。
+> 但跳过会打印明确提示，**不静默**：静默跳过会让人以为功能测过了。
+
+### A-03 的第二处证据：真实 MySQL
+
+并发正确性**必须在真实 MySQL 上再验一次**：本项目依赖 InnoDB 的行锁，而 H2 的锁实现与它不同。
+
+```powershell
+$env:DB_PASSWORD = "123456"
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-concurrency-on-mysql.ps1
+```
+
+它会用独立的库 `hospital_appointment_conc`（不碰开发库），
+跑三组验证并打印结果：原子扣减（1000 线程抢 20 号）、
+**对照组**（"先查再改"的错误写法必须被查出超卖）、归还上界。
+实测：原子 UPDATE **成功 20 / 被拒 980 / 剩余 0**；错误写法 **成功 83 / 剩余 -63**（超卖 63）。
+
+> 那个"对照组"是刻意永久保留的：它每次都跑，并且**要求必须查出超卖**。
+> 这样"验证程序本身有没有检测能力"就成了每次运行都会检查的事，
+> 而不是靠某一次手工确认。
+
+**H2 与 MySQL 有方言差异**，涉及 MySQL 特有写法的地方（原子 UPDATE、唯一索引冲突、
+生成列）必须**在真实 MySQL 上再手工验证一次**。
+
+---
+
+## 七点五、RabbitMQ 与异步链路
+
+### 拓扑
+
+```
+挂号/取消 ──→ appointment.exchange (topic) ──→ appointment.notify.queue ──→ 消费者写 notification 表
+
+下单 ──→ appointment.delay.exchange ──→ appointment.delay.queue
+                                          (TTL 15min，**故意没有消费者**)
+                                               │ TTL 到期成为死信
+                                               ▼
+                                        appointment.dlx ──→ appointment.cancel.queue
+                                                                  ──→ 消费者检查状态 → 取消 + 归还号源
+```
+
+用 **TTL + 死信交换机（DLX）**而不是延迟插件（决策 D-05）：插件要额外安装，而 DLX 是标准机制。
+关键点：**延迟队列自己不消费**——没有消费者，消息只能等到过期。
+
+### 开关与降级（这是 A-07 的落点）
+
+| 配置 | 行为 |
 | --- | --- |
-| `AuthIntegrationTest` | 22 |
-| `AuthServiceTest` | 7 |
-| `SysUserMapperTest` | 4 |
-| **合计** | **33 个，全绿** |
+| `app.mq.enabled=true`（dev 默认） | 真实投递；`NotificationConsumer` 与 `PaymentTimeoutConsumer` 生效 |
+| `app.mq.enabled=false`（**默认值**、也是测试默认） | 用 `NoopNotifier`：**什么都不做，只记一行日志**；挂号/取消完全正常 |
 
-**不依赖本机 MySQL / Redis**：测试用 H2 内存库（`MODE=MySQL`）+ 内存版 Redis 实现，
-任何人 clone 下来 `mvn test` 就能跑。这是"干净机器可复现"（N-04）的一部分。
+**MQ 挂掉不影响挂号**（A-07）体现在两处，缺一不可：
+1. `RabbitNotifier` 内部 catch 一切异常，只记日志、返回 `false`；
+2. `AppointmentService` 调用处**再兜一层**（`tryNotifyBooked` / `tryScheduleTimeout`）。
 
-已验证的行为（对应验收 A-01）：注册 201 → 登录 200 拿 token → 带 token 访问 `/me` 200；
-无 token / 篡改 token / 过期 token → 401 + JSON 错误体；未登记的新接口默认 401；
-重复手机号 409；连续失败 5 次 → 423 锁定；账号停用后 `/me` 立刻 401。
+第二层不是多余：接口上写"绝不抛异常"是**约定**，而约定靠人遵守。
+测试用一个"总是抛异常"的桩验证过——只有第一层时，挂号会被打挂。
 
-> **测试刻意不加类级 `@Transactional`**，改成 `@AfterEach` 自己清理数据。
-> 原因见 `docs/PROGRESS.md`：测试级事务会**掩盖真实事务边界的 bug**——
-> 它曾经把"失败计数被回滚、账号永远不会被锁定"这个 bug 藏了整整一轮。
+### 超时自动取消的关键判断（A-06）
 
-**H2 与 MySQL 有方言差异**，涉及 MySQL 特有写法的地方（原子 UPDATE、唯一索引冲突）
-必须**在真实 MySQL 上再手工验证一次**。
+延迟消息是**下单那一刻**发出的，15 分钟后才回来，而期间用户可能**已付款**。
+所以消费者拿到单号后必须**重新判断状态**，只在 `PENDING_PAYMENT` 时才取消：
+
+> **延迟消息只能表达"到了该检查的时间"，不能表达"到点就该执行"。**
+
+无条件取消会造成"用户付了钱、号被取消、号源还被卖给了别人"。
+已写成测试：下单 → 推进到 `PAID` → 等超过 TTL → 断言仍是 `PAID` 且号源未归还。
+
+### 看得到才算跑通
+
+打开 <http://localhost:15672>（`guest` / `guest`，仅限本机）：
+队列列表里应看到 3 个队列，`appointment.delay.queue` 的 **TTL=900000**、
+**消费者数为 0**，另外两个各 1 个消费者。消息体是 **JSON，可直接在管理台阅读**
+（刻意没用 Java 原生序列化——那样在管理台里是一串乱码，演示时讲不清楚）。
 
 ---
 

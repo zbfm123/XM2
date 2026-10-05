@@ -86,12 +86,15 @@ CREATE TABLE IF NOT EXISTS appointment (
     status          VARCHAR(32)   NOT NULL,
     expire_at       TIMESTAMP     NULL,
     cancel_reason   VARCHAR(255)  NULL,
+    -- 与 db/schema.sql 对应：活跃订单去重键（已取消为 NULL，不参与唯一约束）。
+    -- H2 的生成列语法与 MySQL 略有不同，但语义一致，这是本文件允许的方言差异。
+    dedup_key       BIGINT        AS (CASE WHEN status = 'CANCELLED' THEN NULL ELSE user_id END),
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     CONSTRAINT uk_appointment_no UNIQUE (appointment_no),
     CONSTRAINT uk_appointment_idem UNIQUE (idempotency_key),
-    CONSTRAINT uk_appointment_user_schedule UNIQUE (user_id, schedule_id)
+    CONSTRAINT uk_appointment_active_slot UNIQUE (dedup_key, schedule_id)
 );
 CREATE INDEX IF NOT EXISTS idx_appointment_user ON appointment (user_id, id);
 CREATE INDEX IF NOT EXISTS idx_appointment_status ON appointment (status);

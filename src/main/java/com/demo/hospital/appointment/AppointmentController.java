@@ -1,0 +1,110 @@
+package com.demo.hospital.appointment;
+
+import com.demo.hospital.appointment.domain.AppointmentStatus;
+import com.demo.hospital.appointment.dto.AppointmentView;
+import com.demo.hospital.appointment.dto.BookRequest;
+import com.demo.hospital.appointment.dto.CancelRequest;
+import com.demo.hospital.auth.domain.CurrentUser;
+import com.demo.hospital.common.PageResult;
+import com.demo.hospital.config.AppointmentProperties;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 挂号接口。
+ *
+ * <p>三个端点，正好对应需求 F-03 的核心：
+ * <ul>
+ *   <li>{@code POST /api/appointments} —— 提交挂号（幂等，A-04）</li>
+ *   <li>{@code POST /api/appointments/{no}/cancel} —— 取消并归还号源（A-05）</li>
+ *   <li>{@code GET  /api/appointments} —— 我的挂号（只能看到自己的）</li>
+ * </ul>
+ *
+ * <p>鉴权：全部<b>需登录</b>，且未在白名单里登记 —— 由 {@code SecurityConfig}
+ * 的默认拒绝自动兜住，不需要为本接口改任何安全配置。
+ *
+ * <p>⚠️ 所有端点都<b>不接受 userId 参数</b>：用户 id 一律从
+ * {@link CurrentUser}（由 JWT 过滤器写入的登录上下文）取出。
+ * 如果做成参数，那么"越权查别人的挂号"就只差一次参数篡改。
+ * <b>不该由调用方决定的事，就不要给它这个参数。</b>
+ */
+@RestController
+@RequestMapping("/api/appointments")
+public class AppointmentController {
+
+    private final AppointmentService appointmentService;
+    private final AppointmentProperties appointmentProperties;
+
+    public AppointmentController(AppointmentService appointmentService,
+                                AppointmentProperties appointmentProperties) {
+        this.appointmentService = appointmentService;
+        this.appointmentProperties = appointmentProperties;
+    }
+
+    /**
+     * 提交挂号。
+     *
+     * <p>⚠️ 返回 <b>200 而不是 201</b>，这是刻意的：
+     * 幂等重放时并没有"创建"任何东西（订单早就存在），
+     * 返回 201 会等于对客户端说"我新建了一个"——那是假的。
+     *
+     * <p>区分两种情况的正确方式是响应体里的 {@code replayed} 字段：
+     * {@code true} = 这个订单早就存在，我没有新建；
+     * {@code false} = 本次真的创建了订单。
+     * <b>把语义放在数据里，而不是放在状态码的细微差别里</b>，
+     * 前端和测试都更容易处理。
+     */
+    @PostMapping
+    public ResponseEntity<AppointmentView> book(@Valid @RequestBody BookRequest request) {
+        Long userId = CurrentUser.require().getUserId();
+        AppointmentView view = appointmentService.book(
+                userId, request.scheduleId(), request.idempotencyKey(),
+                appointmentProperties.paymentTimeoutMinutes());
+        return ResponseEntity.ok(view);
+    }
+
+    /**
+     * 取消挂号（归还号源）。
+     *
+     * <p>单号放在路径里而不是请求体里：它是一个<b>资源标识</b>，
+     * 而"取消这个资源"这个动作作用于它。放进请求体只是把同样的信息挪了个位置，
+     * 却失去了"路径即资源"的可读性与可缓存性。
+     *
+     * <p>{@code reason} 可选，请求体可以为空。
+     */
+    @PostMapping("/{appointmentNo}/cancel")
+    public ResponseEntity<AppointmentView> cancel(
+            @PathVariable("appointmentNo") String appointmentNo,
+            @RequestBody(required = false) CancelRequest request) {
+        Long userId = CurrentUser.require().getUserId();
+        String reason = (request == null || request.reason() == null || request.reason().isBlank())
+                ? "用户主动取消"
+                : request.reason().trim();
+        return ResponseEntity.ok(appointmentService.cancel(userId, appointmentNo, reason));
+    }
+
+    /**
+     * 我的挂号列表。
+     *
+     * <p>{@code status} 可选，取值即 {@link AppointmentStatus} 的枚举名
+     * （{@code PENDING_PAYMENT} / {@code PAID} / {@code COMPLETED} / {@code CANCELLED}）。
+     * 传了非法值会由 {@code GlobalExceptionHandler} 映射成 400
+     * （{@code MethodArgumentTypeMismatchException}），而不是 500。
+     */
+    @GetMapping
+    public PageResult<AppointmentView> listMine(
+            @RequestParam(value = "status", required = false) AppointmentStatus status,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size) {
+        Long userId = CurrentUser.require().getUserId();
+        return appointmentService.listMine(userId, status, page, size);
+    }
+}

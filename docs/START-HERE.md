@@ -35,8 +35,8 @@ D:\xmdeepseek\hospital-appointment。
 | 到期 | **2026-10-07** |
 | 后端端口 | **8081**（项目 1 用 8080，两个可以同时跑） |
 | 数据库 | **`hospital_appointment`**（独立库，不碰项目 1 的 `contract_review`） |
-| 测试 | **46 个，全绿**（`mvn test`，H2 内存库，不依赖本机 MySQL/Redis） |
-| 当前任务 | **T-005 挂号状态机**（T-001 骨架、T-002 数据模型、T-003 注册登录、T-004 目录查询已完成） |
+| 测试 | **69 个，全绿**（`mvn test`，H2 内存库，不依赖本机 MySQL/Redis） |
+| 当前任务 | **T-006 号源扣减（防超卖）** ← 技术内核（T-001 ~ T-005 已完成） |
 
 > **文档纪律**：这份文件与 `PROGRESS.md` 曾经落后于代码（写着"Day 0"时 T-001/T-002 已做完）。
 > **文档落后比没有文档更糟**——它会让下一个会话按错误的前提开工。每完成一个任务就更新。
@@ -44,6 +44,15 @@ D:\xmdeepseek\hospital-appointment。
 ---
 
 ## 已完成
+
+### T-005 挂号状态机 ✅
+
+- 交付：`AppointmentStatus` 枚举 + **显式迁移表**（`EnumMap` + 不可变集合）
+- **验收 A-08 已通过**：23 个测试，**穷举 16 个状态对**逐条断言
+- 两条不变量：**不可自环**（否则"重复提交"被当成合法推进）、**终态无出边**
+- 关键设计：迁移表写成**数据**而非散落的 `if`——这样它才成为可穷举断言的对象
+- ⚠️ 穷举测试的预期表是**独立手写的第二份定义**，不是从枚举里读的（否则是同义反复）
+- ✅ **做过反向验证**：故意植入"自环 + 终态可取消"，8 条测试立刻失败
 
 ### T-004 科室 / 医生 / 排班查询 ✅
 
@@ -103,32 +112,26 @@ D:\xmdeepseek\hospital-appointment。
 
 ---
 
-## 下一步：T-005 挂号状态机
+## 下一步：T-006 号源扣减（防超卖）← 技术内核
 
-**这是新会话该做的第一件事。**
+**这是新会话该做的第一件事，也是全项目最重要的一条测试。**
 
 要点：
-1. `AppointmentStatus` 枚举 + **显式**迁移表（不要用 switch 里散落的 if）
-2. 验收 **A-08**：**穷举全部状态对**，断言与预期表一致
-3. 两条必须写进测试的性质：**不可自环**、**终态无出边**
-4. 与项目 1 的审查任务状态机同构，**可以直接对照讲**
+1. `ScheduleMapper.tryDeduct(scheduleId)`：**一条**带条件的原子 UPDATE
+   ```sql
+   UPDATE schedule SET remaining_slots = remaining_slots - 1
+    WHERE id = ? AND remaining_slots > 0
+   ```
+2. 用**受影响行数**判断"抢到没有"；**失败不补偿**
+3. 验收 **A-03**：**1000 线程抢 20 个号** → ①订单恰好 20 条 ②`remaining_slots` 恰好 0 ③无负数
+4. **严禁"先查再改"**——中间那个窗口就是超卖的来源
 
-状态机（见 `02-architecture.md` 第六节）：
-
-```
-PENDING_PAYMENT ──→ PAID ──→ COMPLETED
-        │             │
-        └─────────────┴──→ CANCELLED
-```
-
-⚠️ 已经准备好的前提，**别重复造**：
-- `SecurityConfig` 已是**默认拒绝**——新接口自动受保护，**不需要改任何安全配置**
-  （`AuthIntegrationTest.unlistedEndpointShouldRequireAuth()` 已经在盯着这件事）
-- 分页统一用 `common/PageResult`（**1 基**）；新增 record 上的派生方法记得要能序列化
-- 业务失败统一抛 `BusinessException`（`common` 包），HTTP 状态码由
-  `GlobalExceptionHandler` 集中映射
-- 对外返回体一律用独立 record（`*View` / `*Row`），**不要把实体直接序列化返回**
-- `ScheduleMapper` 目前**只有只读查询**——T-006 的 `tryDeduct` 原子 UPDATE 加在那里
+⚠️ 纪律与陷阱：
+- 这是**绝不砍的三项之一**（A-03/A-07/A-08）。**写不出来就别往下走**
+- 并发测试**不能加测试级 `@Transactional`**：那会把并发变成串行，测试看起来通过但什么都没验证
+- H2 与 MySQL 的行锁语义有差异，**并发测试必须在真实 MySQL 上再跑一次**（这是已知取舍）
+- `ScheduleMapper` 目前只有只读查询，`tryDeduct` 加在那里
+- `AppointmentStatus`（T-005）已完成，T-007 直接用它判断合法性
 
 ---
 

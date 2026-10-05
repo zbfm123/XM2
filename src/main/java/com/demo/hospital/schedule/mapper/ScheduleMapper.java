@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -105,4 +106,91 @@ public interface ScheduleMapper extends BaseMapper<Schedule> {
      */
     @Delete("DELETE FROM schedule WHERE doctor_id = #{doctorId}")
     int deleteByDoctorId(@Param("doctorId") Long doctorId);
+
+    // ==================================================================
+    // T-006 号源扣减 —— 本项目技术内核
+    // ==================================================================
+
+    /**
+     * 尝试扣减一个号源。<b>这是全项目最重要的一条 SQL。</b>
+     *
+     * <h2>为什么必须是这一个语句</h2>
+     *
+     * 错误写法（"先查再改"）：
+     * <pre>
+     * var s = mapper.selectById(id);       // 线程 A、B 都读到 remaining = 1
+     * if (s.getRemainingSlots() &gt; 0) {     // A、B 都通过这道判断
+     *     mapper.decrement(id);            // 都减 → remaining = -1，超卖
+     * }
+     * </pre>
+     * <b>判断与扣减之间的那个窗口，就是超卖的唯一来源。</b>
+     * 加 {@code synchronized} 只在单机有效（多实例直接失效），而且把并发变成了串行——
+     * 那是用锁掩盖问题，不是解决问题。
+     *
+     * <p>正确写法就是把判断和扣减压成<b>一条语句</b>：
+     * {@code WHERE remaining_slots > 0} 与 {@code SET remaining_slots = remaining_slots - 1}
+     * 在同一个语句里，由数据库的行锁保证原子性。中间没有窗口，所以不可能超卖。
+     *
+     * <h2>为什么用"受影响行数"回答问题</h2>
+     *
+     * 返回值 {@code 1} = 抢到了，{@code 0} = 没抢到（号源已满）。
+     * <b>不需要再查一次库</b>，也不需要靠异常来判断——
+     * "我到底抢到没有"就是数据库告诉我们的这个数字。
+     *
+     * <h2>为什么失败时不做任何补偿</h2>
+     *
+     * 没扣到就是没扣到，不存在中间状态。这里没有"回滚"可言，
+     * 调用方拿 {@code 0} 直接抛业务异常即可。
+     *
+     * <h2>⚠️ 为什么不用 {@code UPDATE ... SET remaining = remaining - 1} 不带条件</h2>
+     *
+     * 不带 {@code remaining_slots > 0} 的话，号源会被减成负数。
+     * 负数余额在业务上毫无意义，而且它<b>会静默地掩盖超卖</b>：
+     * 数据库里不再是"刚好 0"，而是一个负数，事后很难判断到底多卖了多少个。
+     *
+     * @param scheduleId 排班 id
+     * @return 受影响行数：<b>1 = 扣减成功，0 = 号源已满（或排班不存在）</b>
+     */
+    @Update("""
+            UPDATE schedule
+               SET remaining_slots = remaining_slots - 1,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = #{scheduleId}
+               AND remaining_slots > 0
+            """)
+    int tryDeduct(@Param("scheduleId") Long scheduleId);
+
+    /**
+     * 归还一个号源（取消挂号时调用）。<b>带上界判断，这一点极易被忽略。</b>
+     *
+     * <h2>为什么必须有 {@code remaining_slots < total_slots}</h2>
+     *
+     * 归还如果不判断上界，<b>重复取消就会把号源加到超过总数</b>：
+     * <pre>
+     * 总号源 20，已被扣到 15
+     * 取消一次 → 16 ✓
+     * 同一次取消被重试 → 17 ✗ 号源凭空变多了
+     * ...最终 → 21，比总号源还多
+     * </pre>
+     * 号源变多比变少更危险：它意味着<b>数据库里的数字已经不再可信</b>，
+     * 而"不超卖"这个保证是建立在"remaining_slots 恰好等于剩余量"之上的。
+     *
+     * <p>所以归还语句必须是：
+     * {@code SET remaining = remaining + 1 WHERE remaining < total_slots}。
+     * 幂等性由 {@code (user_id, schedule_id)} 唯一索引加上这个上界共同保证。
+     *
+     * <p>返回值同样是受影响行数：{@code 0} 表示"已经到了总数上限，这次归还没生效"，
+     * 调用方据此可以判断出"有人在重复取消"。
+     *
+     * @param scheduleId 排班 id
+     * @return 受影响行数：1 = 归还成功，0 = 已满（重复取消或数据异常）
+     */
+    @Update("""
+            UPDATE schedule
+               SET remaining_slots = remaining_slots + 1,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = #{scheduleId}
+               AND remaining_slots < total_slots
+            """)
+    int tryReturn(@Param("scheduleId") Long scheduleId);
 }

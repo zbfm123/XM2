@@ -121,6 +121,59 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：T-006 号源扣减（防超卖）← 技术内核
+
+- 交付：`ScheduleMapper.tryDeduct()` 与 `tryReturn()`，各是**一条**带条件的原子 SQL
+  ```sql
+  -- 扣减：判断与扣减在同一语句里，中间没有窗口
+  UPDATE schedule SET remaining_slots = remaining_slots - 1
+   WHERE id = ? AND remaining_slots > 0
+
+  -- 归还：**带上界判断**，否则重复取消会把号源加超总数
+  UPDATE schedule SET remaining_slots = remaining_slots + 1
+   WHERE id = ? AND remaining_slots < total_slots
+  ```
+- 用**受影响行数**回答"抢到没有"（1 = 抢到，0 = 已满）；**失败不补偿**
+
+#### 验收 A-03：两处独立证据（这是本项目的立身之本）
+
+| 证据 | 环境 | 结果 |
+| --- | --- | --- |
+| `ScheduleConcurrencyTest`（5 个测试） | **H2**（MODE=MySQL） | 1000 线程抢 20 号 → 成功恰好 **20**、剩余恰好 **0**、无负数 ✅ |
+| `scripts/verify-concurrency-on-mysql.ps1` | **真实 MySQL 8.0.40 / InnoDB** | 成功恰好 **20**、被拒 **980**、剩余 **0** ✅ |
+
+**为什么要两处都跑**：本项目依赖的是 **InnoDB 的行锁**，而 H2 的锁实现与它不同。
+H2 的绿灯只能证明"这条 SQL 语法对、逻辑对"，**不能证明"在 InnoDB 上原子"**。
+只跑 H2 就宣称防超卖成立，是拿一个近似实现的行为替代真实实现的行为——
+而这两者恰恰可能在锁上不同。
+
+> 同时保留 H2 版本的理由：**任何人 `mvn test` 都能复现**（N-04"干净机器可复现"的一部分）。
+> MySQL 那份被做成**独立程序 + 脚本**，而不是一个 `@SpringBootTest`，
+> 正是为了不让"必须有 MySQL 才能跑"污染测试套件。
+
+#### 两次反向验证：证明测试真的能抓到错
+
+一条永远通过的测试，和一条真能抓错的测试，在 CI 里看起来一模一样（都是绿色）。
+所以这两处都对着**已知的错误实现**跑过一次：
+
+| 验证对象 | 植入的错误 | 结果 |
+| --- | --- | --- |
+| H2 的 `ScheduleConcurrencyTest` | 把原子 UPDATE 换成"先查再改" | **失败**：`expected: 20 but was: 64`（超卖 3 倍多）✅ |
+| MySQL 的验证程序 | 同样的错误写法（作为对照组保留在程序里） | **超卖 63 个**（成功 83 / 剩余 -63）✅ |
+
+**第二条尤其重要**：验证程序里**永久保留**了那个错误实现作为对照组。
+它每次都跑一遍，并且**要求它必须查出超卖**——查不出来才算失败。
+这样"验证程序本身有没有检测能力"就成了每次运行都会检查的事，
+而不是靠某一次手工确认。
+
+#### 归还号源的上界（T-008 的防线，在这里一并锁定）
+
+`tryReturn` 若不带 `remaining_slots < total_slots`，重复取消就会让号源**超过总数**。
+号源变多比变少更危险：它意味着数据库里的数字已经不再可信，
+而"不超卖"这个保证整个建立在"`remaining_slots` 恰好等于剩余量"之上。
+
+已测：扣 5 → 剩 15 → 归还 20 次**只有 5 次成功** → 恰好回到 20，不过界。
+
 ### 2026-10-05：T-005 挂号状态机
 
 - 交付：`AppointmentStatus` 枚举 + **显式迁移表**（`EnumMap` + 不可变集合）

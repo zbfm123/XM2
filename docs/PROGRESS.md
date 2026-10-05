@@ -121,6 +121,39 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：修掉一个真实的复现性缺口 —— 库要手工建
+
+**发现过程**：核对 A-09「新机器可复现」时，去查 README 的启动步骤，
+发现它要求先手工执行 `CREATE DATABASE`。
+这多出来的一步手工操作，就是"新机器按 README 起站点"失败的第一个入口——
+而且库不存在时底层报的是 `Unknown database`，**看起来像连接配置错**，
+排查方向会被带偏。
+
+**修法**：JDBC URL 加 `createDatabaseIfNotExist=true`，让连接器自动建库。
+
+**实测验证（真实地把库删掉）**：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `DROP DATABASE hospital_appointment` | 库确认不存在 |
+| 直接启动应用 | **成功，约 3 秒** |
+| 库是否被创建 | ✅ `hospital_appointment`，字符集 `utf8mb4` |
+| 表与数据 | ✅ 6 张表、5 科室 / 10 医生 / 140 排班 / 1 演示账号 |
+| **生成列是否按定义创建** | ✅ `dedup_key ... STORED GENERATED if((status = 'CANCELLED'), NULL, user_id)` |
+| **两个关键唯一索引** | ✅ `uk_appointment_active_slot (dedup_key, schedule_id)`、`uk_doctor_dept_name (department_id, name)` |
+| 全新库上跑 `verify-e2e.ps1` | ✅ **18 项全通过** |
+
+> **最后两行是这次验证的重点。** 库能建出来只是第一步——
+> 更要紧的是**新库上的约束与我实现里假设的一致**：
+> 生成列真的按那个表达式生成、活跃订单唯一索引真的建在 `(dedup_key, schedule_id)` 上、
+> 医生表的唯一索引真的存在（那是防重启膨胀的关键）。
+> 如果只验证"应用起来了"，这三个约束里任何一个建错都发现不了。
+
+**顺带修掉一个"开发便利 vs 最小权限"的取舍，并写在 README 里**：
+自动建库要求连接账号有 `CREATE` 权限；生产环境通常不给应用账号建库权限，
+那时应当去掉这个参数、由 DBA 预先建库。
+**这类取舍必须写出来**，否则下一个人会以为"这个参数在哪儿都能留"。
+
 ### 2026-10-05：前后端 API 契约检查（`scripts/check-api-contract.ps1`）
 
 **实测全部通过，0 条提示。**

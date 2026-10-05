@@ -102,10 +102,19 @@ D:\rabbitmq\sbin\rabbitmqctl.bat stop            # 停止
 ```powershell
 # 三个 Windows 服务：MySQL80 / Redis / RabbitMQ（RabbitMQ 服务化后才有）
 Get-Service MySQL80, Redis | Select-Object Name, Status
-
-# 库得先存在（表结构与数据由应用启动时自动建/补，见第五节）
-mysql -uroot -p123456 -e "CREATE DATABASE IF NOT EXISTS hospital_appointment DEFAULT CHARSET utf8mb4;"
 ```
+
+> ✅ **不需要手工建库。** JDBC URL 里带了 `createDatabaseIfNotExist=true`，
+> 库不存在时**由连接器自动创建**；表结构与预置数据接着由 `schema.sql` / `data.sql` 建好。
+>
+> 实测过：**把整个库 `DROP` 掉，直接启动应用** → 3 秒内库被建出来，
+> 6 张表、5 科室 / 10 医生 / 140 条排班 / 1 个演示账号全部就位，
+> 且 `dedup_key` 生成列与两个关键唯一索引都按定义创建。
+> 之后 `scripts/verify-e2e.ps1` 在**这个全新的库上**依旧 18 项全通过。
+>
+> ⚠️ 这条便利的代价是：**连接账号需要有 `CREATE` 权限**（本地 `root` 有）。
+> 生产环境通常不给应用账号建库权限——那时应当去掉这个参数、由 DBA 预先建库。
+> 这是一条"开发便利 vs 最小权限"的取舍，故在此写明。
 
 ### 1.5 一键脚本（推荐）
 

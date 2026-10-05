@@ -12,7 +12,18 @@
 # ===================================================================
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/hospital_appointment?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    # ⚠️ createDatabaseIfNotExist=true：库不存在时**由连接器自动建**。
+    #
+    # 为什么加它：README 原来要求"先手工 CREATE DATABASE"，
+    # 而"干净机器按 README 能起完整站点"（N-04 / A-09）多一步手工操作，
+    # 就多一个"漏了之后看到一堆看不懂的报错"的机会——
+    # 库不存在时底层报的是 Unknown database，看起来像连接配置错。
+    #
+    # 加上它之后，新机器只需要 MySQL 在跑 + 口令正确，应用自己把库建出来。
+    # ⚠️ 代价：连接账号需要有 CREATE 权限（本地 root 有）。
+    #    生产环境通常不给应用账号建库权限，那时应当**去掉这个参数**
+    #    并由 DBA 预先建库——这是一条开发便利与最小权限之间的取舍。
+    url: jdbc:mysql://localhost:3306/hospital_appointment?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver

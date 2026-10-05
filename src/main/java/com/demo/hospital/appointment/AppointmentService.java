@@ -314,6 +314,92 @@ public class AppointmentService {
     }
 
     // ==================================================================
+    // T-012 超时自动取消（延迟队列消费者调用）
+    // ==================================================================
+
+    /**
+     * 待支付超时：取消订单并归还号源。
+     *
+     * <h2>⚠️ 这里有一个真实的坑，是本任务最关键的判断</h2>
+     *
+     * <b>只有订单仍然是 {@code PENDING_PAYMENT} 时才允许取消。</b>
+     *
+     * <p>延迟消息是<b>下单那一刻</b>就发出去的，15 分钟后才回来。
+     * 而在这 15 分钟里用户完全可能已经<b>付款</b>了。如果消费者不看状态就取消：
+     *
+     * <pre>
+     *   13:00  下单，发一条 15 分钟延迟消息
+     *   13:05  用户支付成功 -> PAID
+     *   13:15  延迟消息到期 -> 消费者把 PAID 的订单改成 CANCELLED，并归还号源
+     * </pre>
+     * 结果是：<b>用户付了钱，号被取消了，而且号源被还回去卖给了别人。</b>
+     * 这是最严重的一类数据不一致——它同时伤害了用户和医院的账。
+     *
+     * <p>所以取消动作必须是<b>带起始状态条件的原子 UPDATE</b>：
+     * 受影响行数为 0 就说明"它已经不是我该取消的那个状态了"，
+     * 此时<b>什么都不做</b>（既不报错，也不归还号源）。
+     *
+     * <p>这也是"用延迟队列做定时"的通用纪律：
+     * <b>延迟消息只能表达"到了该检查的时间"，不能表达"到点就该执行"。</b>
+     * 到点之后该做什么，必须重新判断一次。
+     *
+     * @return {@code true} = 本次确实取消了；{@code false} = 订单已不是待支付（什么都不做）
+     */
+    @Transactional(noRollbackFor = BusinessException.class)
+    public boolean cancelOnTimeout(String appointmentNo, String reason) {
+        Appointment appointment = appointmentMapper.findByNo(appointmentNo);
+        if (appointment == null) {
+            // 订单不存在（可能已被清理）。不抛异常：这是定时任务，
+            // 一条处理不掉的消息不该让消费者反复重投。
+            log.warn("超时取消：订单不存在，忽略: no={}", appointmentNo);
+            return false;
+        }
+
+        // 已经是终态（已取消/已完成）或已支付 —— 一律不动它。
+        if (appointment.getStatus() != AppointmentStatus.PENDING_PAYMENT) {
+            log.info("超时取消：订单当前状态为 {}，不属于待支付，跳过（这是正确行为）: no={}",
+                    appointment.getStatus(), appointmentNo);
+            return false;
+        }
+
+        // 带起始状态的原子 UPDATE：与用户主动取消走同一条路径、同一套保护
+        int changed = appointmentMapper.transitionStatus(
+                appointment.getId(), AppointmentStatus.PENDING_PAYMENT,
+                AppointmentStatus.CANCELLED, reason);
+
+        if (changed == 0) {
+            // 在"读"与"改"之间状态被改了（用户刚好付款，或用户自己取消了）。
+            // ⚠️ 这种并发不是错误，而且**绝不能归还号源**——
+            //    号源该不该还，取决于这次取消到底有没有生效。
+            log.info("超时取消：状态已被并发修改，本次不生效: no={}", appointmentNo);
+            return false;
+        }
+
+        // 只有真正改变了状态的那一次才归还号源（与用户主动取消同一条纪律）
+        int returned = scheduleMapper.tryReturn(appointment.getScheduleId());
+        if (returned == 0) {
+            log.error("超时取消成功但号源归还失败（受影响行数 0）: no={} scheduleId={}",
+                    appointmentNo, appointment.getScheduleId());
+        }
+
+        // 通知用户"预约已因超时被取消"。同样尽力而为。
+        boolean notified;
+        try {
+            notified = notifier.notifyCancelled(toCancelledMessage(appointment));
+        } catch (Exception e) {
+            log.error("超时取消通知投递抛出异常（已兜住）: no={}", appointmentNo, e);
+            notified = false;
+        }
+        if (!notified) {
+            log.error("超时取消成功但通知投递失败（业务不受影响）: no={}", appointmentNo);
+        }
+
+        log.info("超时自动取消完成: no={} scheduleId={} 号源已归还={}",
+                appointmentNo, appointment.getScheduleId(), returned == 1);
+        return true;
+    }
+
+    // ==================================================================
     // T-009 我的挂号列表
     // ==================================================================
 

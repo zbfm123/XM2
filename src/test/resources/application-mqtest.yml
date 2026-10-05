@@ -1,0 +1,69 @@
+# ===================================================================
+# 延迟队列集成测试专用配置（T-012 / 验收 A-06）
+#
+# ⚠️ 这个 profile 是**唯一需要真实 RabbitMQ 的测试配置**，
+#    因此刻意与 application-test.yml 分开：
+#    "干净机器 clone 下来 mvn test 就能全绿"（N-04 的一部分）不能被破坏。
+#    本 profile 只在显式指定时启用，见 PaymentTimeoutIntegrationTest 的说明。
+#
+# 两个关键覆盖：
+#   1. payment-ttl-millis 从 15 分钟改成 **1 秒** ——
+#      否则验证"到期自动取消"要真的等 15 分钟，那种测试没有人会跑。
+#   2. 队列名换成 *_test 后缀 ——
+#      ⚠️ TTL 是**队列属性**，一旦队列已存在就没法改。
+#      用独立队列名可以让测试反复运行而不必手工删队列。
+# ===================================================================
+spring:
+  datasource:
+    url: jdbc:h2:mem:hospital_mq_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema-h2.sql
+      continue-on-error: false
+      encoding: UTF-8
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5672
+    username: guest
+    password: guest
+    connection-timeout: 3s
+    listener:
+      simple:
+        default-requeue-rejected: false
+        # 测试里要尽快消费，不要等默认的 idle 间隔
+        prefetch: 1
+
+app:
+  jwt:
+    secret: test-only-secret-must-be-at-least-32-bytes-long
+    issuer: hospital-appointment
+    expire-minutes: 120
+    max-failures: 5
+    lock-minutes: 15
+  appointment:
+    payment-timeout-minutes: 15
+  mq:
+    # ⚠️ 这个测试**必须**打开 MQ：它验证的正是"延迟消息真的会到期并触发取消"
+    enabled: true
+    # 1 秒。测试等它 ── 这就是把"15 分钟"变成"1 秒"的地方
+    payment-ttl-millis: 1000
+    notify-queue: appointment.notify.queue.test
+    delay-queue: appointment.delay.queue.test
+    cancel-queue: appointment.cancel.queue.test
+
+logging:
+  level:
+    root: WARN
+    com.demo.hospital: INFO
+    org.springframework.amqp: WARN

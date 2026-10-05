@@ -49,6 +49,26 @@ public interface AppointmentMapper extends BaseMapper<Appointment> {
                                 @Param("userId") Long userId);
 
     /**
+     * 按业务单号查，<b>不带 user_id</b>。
+     *
+     * <p>⚠️ 存在的唯一理由是<b>没有登录上下文的调用方</b>：T-012 的延迟队列消费者。
+     * 它是系统自己的定时任务，不是某个用户的请求，所以"当前用户"这个概念不成立。
+     *
+     * <p>这也是本 Mapper 里<b>唯一</b>一条不按用户收口的查询——
+     * 因此它绝不能出现在任何由 HTTP 请求直接驱动的代码路径上，
+     * 否则就绕过了"只能看到自己的"这条隔离规则（F-03-6）。
+     * 命名上刻意不带 {@code AndUser} 后缀，让"这条查询没有用户约束"在调用处一眼可见。
+     */
+    @Select("""
+            SELECT id, appointment_no, user_id, schedule_id, doctor_id, department_id,
+                   idempotency_key, visit_date, period, fee, status, expire_at,
+                   cancel_reason, created_at, updated_at
+              FROM appointment
+             WHERE appointment_no = #{appointmentNo}
+            """)
+    Appointment findByNo(@Param("appointmentNo") String appointmentNo);
+
+    /**
      * 同一患者对同一排班的<b>活跃</b>订单。
      *
      * <p>⚠️ {@code status <> 'CANCELLED'} 这个条件是必需的，不是可选的过滤：

@@ -55,7 +55,7 @@ public class NotificationConsumer {
      * 这样写的好处是消息体在 RabbitMQ 管理台里是<b>可读的 JSON</b>，
      * 演示时可以直接点开给面试官看。
      */
-    @RabbitListener(queues = RabbitTopologyConfig.NOTIFY_QUEUE)
+    @RabbitListener(queues = RabbitTopologyConfig.DEFAULT_NOTIFY_QUEUE)
     public void onNotification(NotificationMessage message) {
         try {
             log.info("收到通知消息: no={} type={} doctor={}",

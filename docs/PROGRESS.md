@@ -121,6 +121,93 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：T-010 RabbitMQ / T-011 MQ 不可用不影响挂号 / T-012 超时自动取消
+
+- **验收 A-06（延迟队列自动取消）与 A-07（MQ 挂了挂号仍成功）已通过**
+- 测试：**89 → 97 个，全绿**；其中 4 条在**真实 RabbitMQ** 上跑
+
+#### 拓扑
+
+```
+挂号/取消 ──→ appointment.exchange (topic) ──→ appointment.notify.queue ──→ 消费者写 notification 表
+
+下单 ──→ appointment.delay.exchange ──→ appointment.delay.queue
+                                          (TTL 15min，**故意没有消费者**)
+                                               │ TTL 到期成为死信
+                                               ▼
+                                        appointment.dlx ──→ appointment.cancel.queue
+                                                                  ──→ 消费者检查状态 → 取消 + 归还号源
+```
+
+用 **TTL + 死信交换机**而不是延迟插件（决策 D-05）：插件要额外安装，而 DLX 是标准机制、面试更常问。
+关键点：**延迟队列自己不消费**——没有消费者，消息只能等到过期。
+
+#### 三个刻意的设计决定
+
+**① 整套 MQ 组件挂在 `app.mq.enabled` 下，默认关闭。**
+否则在没装 broker 的机器上，应用启动时就会去连 broker、连不上就抛异常，
+**连"启动"这一步都过不去**——那样 A-07 就成了空话。
+默认关闭同时保证了 `mvn test` 不依赖 broker（N-04"干净机器可复现"的一部分）。
+
+**② MQ 关闭时用 `NoopNotifier` 显式实现"什么都不做"，而不是干脆不注册 Bean。**
+不注册会让依赖 `Notifier` 的 `AppointmentService` 起不来，而"MQ 没开"恰恰是必须能正常工作的状态。
+这也说明：**"不启用某功能"应当是一个显式的实现，而不是一段缺失的代码。**
+
+**③ 消息用 JSON 序列化，不用 Java 原生序列化。**
+Java 序列化的消息在管理台里是一串乱码，演示时点开给面试官看什么都看不到；
+而"能在管理台看到消息内容"正是 MQ 最好讲的地方。
+
+#### T-011 暴露出一个真实的设计缺口（已修）
+
+`Notifier` 接口上写着"绝不抛异常"，但**约定靠人遵守，人会漏**；
+框架代码（`RabbitTemplate`、连接池）抛的正是异常。
+测试用了一个"总是抛异常"的桩，**挂号立刻被打挂**。
+
+修法：调用方也加兜底（`tryNotifyBooked` / `tryScheduleTimeout`），
+于是 A-07 从"取决于实现者记得 catch"变成**"无论实现怎么写都成立"**。
+这是第二道防线，与号源的唯一索引、状态机的条件 UPDATE 是同一种思路。
+
+#### T-012 最关键的判断：延迟消息只能表达"该检查了"，不能表达"该执行了"
+
+延迟消息是**下单那一刻**发出的，15 分钟后才回来，而这 15 分钟里用户可能已经**付款**了。
+如果消费者不看状态就取消：
+
+```
+13:00  下单，发一条 15 分钟延迟消息
+13:05  用户支付成功 -> PAID
+13:15  延迟消息到期 -> 把 PAID 改成 CANCELLED 并归还号源
+```
+
+结果是**用户付了钱、号被取消、号源还被卖给了别人**——同时伤害用户和医院的账。
+
+因此取消动作必须是**带起始状态条件的原子 UPDATE**（与用户主动取消同一条路径）：
+受影响行数为 0 说明"它已经不是我该取消的那个状态了"，此时**什么都不做**。
+
+> 已写成测试（`paidAppointmentMustNotBeCancelledByTimeout`）：
+> 下单 → 手工推进到 PAID → 等超过 TTL → 断言状态仍是 PAID 且号源未被归还。
+
+#### 又一个"保护措施没接上"：`application-dev.yml` 的重复顶层键
+
+在文件末尾追加 MQ 配置时写了**第二个顶层 `app:` 和第二个 `spring:`**，
+启动时 snakeyaml 直接抛 `DuplicateKeyException`，
+而它的报错只说 `while constructing a mapping`——**不告诉你是哪一行重复**。
+已重写为单段，并在文件头写明"这个文件只允许有一个顶层 spring: 和 app:"。
+
+（这也是同一主题的第 N 次出现：配置、索引、事务边界、BOM 守卫……
+**每一次的代码都"看起来是对的"。**）
+
+#### 测试策略：唯一需要真实 broker 的那一份怎么放
+
+`PaymentTimeoutIntegrationTest` 是唯一需要真 RabbitMQ 的测试（TTL 到期后的死信转发是 **broker 行为**，
+H2 + 桩测不出来）。做法：
+
+- 独立 profile `application-mqtest.yml`：打开 MQ、**TTL 改成 1 秒**、队列名加 `_test` 后缀
+  （TTL 是**队列属性**，一旦队列存在就没法改；独立队列名让测试可反复运行而不必手工删队列）
+- 类内用 `Assumptions` 探测 broker，**不可达时跳过而不是失败**——
+  没有 broker 的机器跑全量测试依然全绿
+- 但跳过**必须有声音**：打印明确提示说明"A-06 这次没有被验证"。
+  **静默跳过是最糟的**——它让人以为功能测过了
+
 ### 2026-10-05：T-007 提交挂号 / T-008 取消挂号 / T-009 我的挂号
 
 - 端点：`POST /api/appointments`、`POST /api/appointments/{no}/cancel`、`GET /api/appointments`

@@ -61,6 +61,19 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(name = "app.mq.enabled", havingValue = "true")
 public class RabbitTopologyConfig {
 
+    /**
+     * 消费者监听的队列名。
+     *
+     * <p>⚠️ {@code @RabbitListener(queues = ...)} 的取值必须是<b>编译期常量</b>，
+     * 因此这里没法直接写成 {@code mqProperties.notifyQueue()}。
+     * 默认值与应用配置的默认值一致；若在配置里改了队列名，
+     * 消费端要用 {@code queuesToDeclare} 或单独指定——本项目不改，故用常量。
+     */
+    public static final String DEFAULT_NOTIFY_QUEUE = "appointment.notify.queue";
+
+    /** 取消消费者监听的队列名（同上，需编译期常量）。 */
+    public static final String DEFAULT_CANCEL_QUEUE = "appointment.cancel.queue";
+
     private final MqProperties mqProperties;
 
     public RabbitTopologyConfig(MqProperties mqProperties) {
@@ -72,7 +85,7 @@ public class RabbitTopologyConfig {
     // ------------------------------------------------------------------
 
     public static final String APPOINTMENT_EXCHANGE = "appointment.exchange";
-    public static final String NOTIFY_QUEUE = "appointment.notify.queue";
+    /** ⚠️ 队列名由 app.mq.notify-queue 决定（见 MqProperties）——测试要能用独立队列。 */
     public static final String ROUTING_CREATED = "appointment.created";
     public static final String ROUTING_CANCELLED = "appointment.cancelled";
 
@@ -90,7 +103,7 @@ public class RabbitTopologyConfig {
 
     @Bean
     public Queue notifyQueue() {
-        return QueueBuilder.durable(NOTIFY_QUEUE).build();
+        return QueueBuilder.durable(mqProperties.notifyQueue()).build();
     }
 
     @Bean
@@ -108,9 +121,9 @@ public class RabbitTopologyConfig {
     // ------------------------------------------------------------------
 
     public static final String DELAY_EXCHANGE = "appointment.delay.exchange";
-    public static final String DELAY_QUEUE = "appointment.delay.queue";
+
     public static final String DLX = "appointment.dlx";
-    public static final String CANCEL_QUEUE = "appointment.cancel.queue";
+
     public static final String ROUTING_DELAY = "appointment.delay";
     public static final String ROUTING_CANCEL = "appointment.cancel";
 
@@ -132,7 +145,7 @@ public class RabbitTopologyConfig {
      */
     @Bean
     public Queue delayQueue() {
-        return QueueBuilder.durable(DELAY_QUEUE)
+        return QueueBuilder.durable(mqProperties.delayQueue())
                 // ⚠️ QueueBuilder.ttl 的签名是 ttl(int)，而配置里用 long 更自然
                 //    （毫秒数容易写成大数字）。这里显式转换并注明上界：
                 //    int 毫秒上限约 24.8 天，超过它 TTL 会溢出成负数——
@@ -156,7 +169,7 @@ public class RabbitTopologyConfig {
 
     @Bean
     public Queue cancelQueue() {
-        return QueueBuilder.durable(CANCEL_QUEUE).build();
+        return QueueBuilder.durable(mqProperties.cancelQueue()).build();
     }
 
     @Bean

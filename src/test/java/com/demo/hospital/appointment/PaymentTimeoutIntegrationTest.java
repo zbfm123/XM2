@@ -75,6 +75,11 @@ class PaymentTimeoutIntegrationTest {
     /** 等待自动取消的上限。TTL 是 1 秒，给 60 秒余量足够（含 broker 轮询间隔）。 */
     private static final int WAIT_SECONDS = 60;
 
+    /** 测试专用队列名，必须与 application-mqtest.yml 里配置的一致。 */
+    private static final String TEST_NOTIFY_QUEUE = "appointment.notify.queue.test";
+    private static final String TEST_DELAY_QUEUE = "appointment.delay.queue.test";
+    private static final String TEST_CANCEL_QUEUE = "appointment.cancel.queue.test";
+
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private PasswordEncoder passwordEncoder;
@@ -86,7 +91,7 @@ class PaymentTimeoutIntegrationTest {
     @Autowired private AppointmentMapper appointmentMapper;
     @Autowired private AppointmentProperties appointmentProperties;
 
-    /** 用它探测 broker 是否可达。 */
+    /** 用它探测 broker 是否可达，并在测试后清理测试队列。 */
     @Autowired(required = false) private RabbitAdmin rabbitAdmin;
 
     private String phone;
@@ -140,6 +145,34 @@ class PaymentTimeoutIntegrationTest {
             departmentMapper.deleteById(departmentId);
         }
         userMapper.deleteByPhone(phone);
+
+        // 清理测试队列里堆积的消息。
+        //
+        // 【为什么要清】这三个 *.test 队列的消费者只在测试运行时存在，
+        // 所以每条测试消息都会变成**永久堆积**。实测跑过若干次后：
+        // cancel.queue.test 堆了 66 条、notify.queue.test 堆了 70 条。
+        // 而演示时正好要用 RabbitMQ 管理台看队列——一堆测试队列会把
+        // 真正要讲的三个队列淹没。
+        //
+        // 【为什么是 purge 而不是 delete】⚠️ 这里踩过一个坑：
+        //   最初写的是 deleteQueue。结果**整个测试类一起跑时必定失败**，
+        //   只有单个用例跑才通过。原因：删掉队列后由 Spring AMQP 重新声明，
+        //   而"删除 → 重新声明"之间有一个窗口，此时投递的消息
+        //   **路由不到任何队列（exchange 上没有绑定），会被静默丢弃**。
+        //   最后执行的那个用例（自动取消）正好落在这个窗口里。
+        //
+        //   ⚠️ 而且这个失败**只在整类运行时复现**，很容易被误判成"偶发"。
+        //   教训：**"清理干净"和"把东西删掉"不是一回事**——
+        //   对"声明与绑定由框架管理"的中间件，清空内容比删除实体安全得多。
+        if (rabbitAdmin != null) {
+            for (String q : new String[]{TEST_NOTIFY_QUEUE, TEST_DELAY_QUEUE, TEST_CANCEL_QUEUE}) {
+                try {
+                    rabbitAdmin.purgeQueue(q);
+                } catch (Exception e) {
+                    // 队列不存在（例如未连上 broker 时跳过了测试）——忽略
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -164,9 +197,13 @@ class PaymentTimeoutIntegrationTest {
         // 等 broker 把消息 TTL 到期、死信转发、消费者处理
         boolean cancelled = waitForStatus(appointmentNo, AppointmentStatus.CANCELLED);
 
+        // ⚠️ 这条断言曾经偶发失败过一次（等了整整 60 秒）。
+        //    所以失败信息里附上**队列状态**——下次再偶发时能直接看出是
+        //    "消息没进 delay 队列"、"消息卡在 cancel 队列没人消费"，
+        //    还是"消息被消费了但业务没生效"。没有这些信息只能靠猜。
         assertThat(cancelled)
-                .as("延迟消息应在 TTL 到期后触发自动取消（本 profile 的 TTL 是 1000ms，最多等 %d 秒）",
-                        WAIT_SECONDS)
+                .as("延迟消息应在 TTL 到期后触发自动取消（本 profile 的 TTL 是 1000ms，最多等 %d 秒）。%s",
+                        WAIT_SECONDS, queueDiagnostics(appointmentNo))
                 .isTrue();
 
         // ① 状态变成 CANCELLED
@@ -265,6 +302,35 @@ class PaymentTimeoutIntegrationTest {
     }
 
     // ------------------------------------------------------------------
+
+    /**
+     * 收集队列状态，供失败时的诊断信息使用。
+     *
+     * <p>为什么值得专门写一个方法：这条测试涉及"broker 行为 + 异步消费"，
+     * 失败时可能是好几个环节中的任意一个。把三个队列的
+     * "待处理消息数 / 消费者数"打出来，一眼就能定位是哪一环。
+     * <b>一条偶发失败的测试如果不说清失败现场，等于没有价值。</b>
+     */
+    private String queueDiagnostics(String appointmentNo) {
+        if (rabbitAdmin == null) {
+            return "（broker 不可达，无法采集队列状态）";
+        }
+        StringBuilder sb = new StringBuilder("队列状态: ");
+        for (String q : new String[]{TEST_NOTIFY_QUEUE, TEST_DELAY_QUEUE, TEST_CANCEL_QUEUE}) {
+            try {
+                var props = rabbitAdmin.getQueueProperties(q);
+                sb.append('[').append(q).append(" 消息=")
+                        .append(props == null ? "?" : props.get("QUEUE_MESSAGE_COUNT"))
+                        .append(" 消费者=")
+                        .append(props == null ? "?" : props.get("QUEUE_CONSUMER_COUNT"))
+                        .append("] ");
+            } catch (Exception e) {
+                sb.append('[').append(q).append(" 取不到] ");
+            }
+        }
+        sb.append("订单状态=").append(appointmentMapper.findByNo(appointmentNo).getStatus());
+        return sb.toString();
+    }
 
     /** 探测 broker 是否可达：RabbitAdmin 能取到队列属性就说明连上了。 */
     private boolean brokerReachable() {

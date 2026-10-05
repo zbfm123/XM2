@@ -66,4 +66,7 @@ logging:
   level:
     root: WARN
     com.demo.hospital: INFO
+    # ⚠️ 排查本测试的偶发失败时把这里临时调到 DEBUG 很有用——
+    #    能直接看到"投递 → 死信转发 → 消费"三段日志各自有没有发生。
+    #    平时保持 WARN，避免刷屏。
     org.springframework.amqp: WARN

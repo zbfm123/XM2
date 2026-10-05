@@ -1,0 +1,51 @@
+# ===================================================================
+# 测试环境（H2 内存库）
+#
+# 取舍与项目 1 相同：本机没有 Docker，不用 Testcontainers。
+# 代价是 H2 与 MySQL 有方言差异 —— 涉及 MySQL 特有写法的地方
+# （原子的 UPDATE ... WHERE remaining_slots > 0、唯一索引冲突）
+# 必须在真实 MySQL 上再手工验证一次。
+#
+# ⚠️ 测试**不依赖本机 MySQL 与 Redis**：任何人 clone 下来 `mvn test` 就能跑。
+#    这是"干净机器可复现"（N-04）的一部分。
+# ===================================================================
+spring:
+  datasource:
+    # MODE=MySQL：让 H2 接受 ON DUPLICATE KEY UPDATE 这类 MySQL 写法（T-002 的数据脚本要用）
+    url: jdbc:h2:mem:hospital_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema-h2.sql
+      # 不加载 data.sql：测试需要的是**可控的最小数据**（每个测试自己造），
+      # 而不是 5 科室 / 140 条排班。用生产预置数据跑测试只会让断言依赖无关的数字。
+      continue-on-error: false
+      encoding: UTF-8
+
+  # 测试不需要真实 Redis；用 RedisTestConfig 里的内存实现顶替
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+app:
+  jwt:
+    # 测试用固定密钥，与生产默认值无关，避免"测试通过是因为生产配置恰好也对"
+    secret: test-only-secret-must-be-at-least-32-bytes-long
+    issuer: hospital-appointment
+    expire-minutes: 120
+    # 与 AuthIntegrationTest 中"前 4 次普通失败、第 5 次锁定"的断言保持一致。
+    # 刻意不用 5 这个"默认值"以外的数字：测试若依赖默认值，就测不出配置是否真的生效。
+    max-failures: 5
+    lock-minutes: 15
+  appointment:
+    payment-timeout-minutes: 15
+
+logging:
+  level:
+    root: WARN
+    com.demo.hospital: INFO

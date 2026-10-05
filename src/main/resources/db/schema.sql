@@ -47,6 +47,17 @@ CREATE TABLE IF NOT EXISTS department (
 
 -- -------------------------------------------------------------------
 -- 医生
+--
+-- ⚠️ uk_doctor_dept_name 不只是"防重复"，它是**启动脚本能幂等的前提**：
+--    data.sql 用 `INSERT ... ON DUPLICATE KEY UPDATE` 预置医生，
+--    而 ON DUPLICATE KEY 必须有一个唯一索引才能触发。
+--    缺了它，每次重启都会再插 10 位医生，并且**连带再生成一遍他们的排班**
+--    （排班按 doctor_id 生成，新医生 = 新号源）——演示数据会随重启不断膨胀。
+--    这是真实踩过的坑，见 docs/PROGRESS.md。
+--
+-- 为什么唯一键是 (department_id, name) 而不是 name：
+--    重名是真实存在的（"张伟"可以在两个科室各有一位），
+--    但同一科室里出现两个同名医生应当被视为脚本重复执行。
 -- -------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS doctor (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
@@ -57,6 +68,7 @@ CREATE TABLE IF NOT EXISTS doctor (
     intro         VARCHAR(500) NULL COMMENT '简介',
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_doctor_dept_name (department_id, name),
     KEY idx_doctor_department (department_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '医生';
 

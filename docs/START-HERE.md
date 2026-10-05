@@ -35,12 +35,40 @@ D:\xmdeepseek\hospital-appointment。
 | 到期 | **2026-10-07** |
 | 后端端口 | **8081**（项目 1 用 8080，两个可以同时跑） |
 | 数据库 | **`hospital_appointment`**（独立库，不碰项目 1 的 `contract_review`） |
-| 测试 | 尚未开始（骨架阶段） |
-| 当前任务 | **T-003 用户注册登录**（T-001 骨架、T-002 数据模型已完成） |
+| 测试 | **46 个，全绿**（`mvn test`，H2 内存库，不依赖本机 MySQL/Redis） |
+| 当前任务 | **T-005 挂号状态机**（T-001 骨架、T-002 数据模型、T-003 注册登录、T-004 目录查询已完成） |
+
+> **文档纪律**：这份文件与 `PROGRESS.md` 曾经落后于代码（写着"Day 0"时 T-001/T-002 已做完）。
+> **文档落后比没有文档更糟**——它会让下一个会话按错误的前提开工。每完成一个任务就更新。
 
 ---
 
 ## 已完成
+
+### T-004 科室 / 医生 / 排班查询 ✅
+
+- 端点：`GET /api/departments`、`GET /api/doctors?deptId=`、
+  `GET /api/schedules?doctorId=&from=&to=&page=&size=`
+- **验收 A-02 已通过**（13 个集成测试 + 真实 MySQL 手工验证）
+- 要点：科室**不分页**（字典数据）、只有排班分页且 **`page` 从 1 开始**；
+  "不存在"返回 **404**、与"没数据"的 **200 空列表**区分；
+  排班用一条 JOIN + 读模型 record 取完，**无 N+1**；
+  服务端返回 `soldOut` 供前端预禁用按钮
+- ⚠️ **T-004 一上来就红了 3 条测试，3 条都是真缺陷**（JOIN 同名列串位、缺参数返回 500、
+  `totalPages` 没被序列化）。详见 `PROGRESS.md`。
+
+### T-003 用户注册登录（JWT）✅
+
+- 端点：`POST /api/auth/register`、`POST /api/auth/login`、`GET /api/auth/me`
+- **验收 A-01 已通过**（集成测试 + 真实 MySQL 手工验证）：
+  注册 201 → 登录 200 拿 token → 带 token 访问 `/me` 200；
+  无 token / 篡改 token / 过期 token → **401 + JSON 错误体**；
+  未登记的新接口默认 401；重复手机号 409；连续失败 5 次 → **423 锁定**
+- **`SecurityConfig` 的"全放行"已换成真实规则**（默认拒绝 + 白名单），
+  T-001 留下的 `TODO(T-003)` 已完成使命
+- 新增 `/api/health`（部署与 Nginx 探活用；任务书没写但必须有）
+- ⚠️ **T-003 踩了两个"测试全绿但功能是坏的"的坑**，都记在 `PROGRESS.md` 里，
+  **新会话务必读一遍**——它们代表了一整类错误。
 
 ### T-001 项目骨架 ✅
 
@@ -49,7 +77,6 @@ D:\xmdeepseek\hospital-appointment。
   加了会产生自动配置噪音。这也正好是需求 A-07（MQ 不可用不影响主流程）——**T-010 再加**
 - `.mvn/jvm.config`：指到 `D:\java\jdk-21`（PATH 上的 `java` 是 1.8）
 - `application.yml` / `application-dev.yml`：凭据走环境变量，端口 8081
-- `SecurityConfig`：**T-001 阶段是"全放行"的临时版本**，代码里有 `TODO(T-003)` 标注
 - 启动验证：**Tomcat started on port 8081** ✅
 
 ### T-002 数据模型 ✅
@@ -65,7 +92,8 @@ D:\xmdeepseek\hospital-appointment。
 | **`appointment`** | **挂号订单 —— 状态机在这里** |
 | `notification` | 通知记录（异步消费的产物） |
 
-预置数据实测：**5 科室 / 10 医生 / 140 条排班 / 1 个演示账号**
+预置数据实测（已修复"重启导致重复插入"的 bug，现在**重启多少次都稳定**）：
+**5 科室 / 10 医生 / 140 条排班 / 1 个演示账号**
 
 演示账号：**手机号 `13800000001`，口令 `Demo@2026`**
 
@@ -75,20 +103,32 @@ D:\xmdeepseek\hospital-appointment。
 
 ---
 
-## 下一步：T-003 用户注册登录
+## 下一步：T-005 挂号状态机
 
-**这是新会话该做的第一件事。** 详细验收标准见
-[04-tasks-and-acceptance.md](04-tasks-and-acceptance.md) 的 T-003。
+**这是新会话该做的第一件事。**
 
 要点：
-1. 注册（手机号 + 口令，BCrypt）
-2. 登录返回 JWT
-3. `GET /api/auth/me`
-4. **把 `SecurityConfig` 的"全放行"换成真实规则**（那里有 TODO 标注）
-5. 连续失败锁定（可参考项目 1 的 `LoginAttemptGuard`，**建议直接复用其思路**）
+1. `AppointmentStatus` 枚举 + **显式**迁移表（不要用 switch 里散落的 if）
+2. 验收 **A-08**：**穷举全部状态对**，断言与预期表一致
+3. 两条必须写进测试的性质：**不可自环**、**终态无出边**
+4. 与项目 1 的审查任务状态机同构，**可以直接对照讲**
 
-> 项目 1 的 JWT 实现可以直接借鉴：
-> `..\contract-review-platform\src\main\java\com\demo\contract\security\`
+状态机（见 `02-architecture.md` 第六节）：
+
+```
+PENDING_PAYMENT ──→ PAID ──→ COMPLETED
+        │             │
+        └─────────────┴──→ CANCELLED
+```
+
+⚠️ 已经准备好的前提，**别重复造**：
+- `SecurityConfig` 已是**默认拒绝**——新接口自动受保护，**不需要改任何安全配置**
+  （`AuthIntegrationTest.unlistedEndpointShouldRequireAuth()` 已经在盯着这件事）
+- 分页统一用 `common/PageResult`（**1 基**）；新增 record 上的派生方法记得要能序列化
+- 业务失败统一抛 `BusinessException`（`common` 包），HTTP 状态码由
+  `GlobalExceptionHandler` 集中映射
+- 对外返回体一律用独立 record（`*View` / `*Row`），**不要把实体直接序列化返回**
+- `ScheduleMapper` 目前**只有只读查询**——T-006 的 `tryDeduct` 原子 UPDATE 加在那里
 
 ---
 
@@ -100,9 +140,45 @@ D:\xmdeepseek\hospital-appointment。
 | MySQL | Windows 服务 `MySQL80`，`root` / `123456` |
 | Redis | Windows 服务 `Redis`，`127.0.0.1:6379`，口令 `123456` |
 | **npm** | ⚠️ **必须用 `npm.cmd`**，`npm` 被执行策略拦住 |
-| **RabbitMQ** | ❌ 待安装（用户负责） |
-| **Nginx** | ❌ 待安装（用户负责，解压即用） |
+| **Erlang** | ✅ `D:\erl-26.2.5.21`（OTP 26.2.5.21，zip 解压，不写 C 盘） |
+| **RabbitMQ** | ✅ `D:\rabbitmq`（4.1.8）；⚠️ **服务化待执行**（见下） |
+| **Nginx** | ✅ 已存在于 `D:\nginx`；用 **1.22.0**。⚠️ **80 端口被 Steam++ 占用** |
+| PowerShell 控制台 | 显示中文会是乱码，**那是控制台 GBK 的问题，不是数据问题**（已用 `HEX()` 验证） |
 | 启动命令 | 见下面 |
+
+### RabbitMQ（已装好，管理台可用）
+
+| 项 | 值 |
+| --- | --- |
+| 版本 | **RabbitMQ 4.1.8 + Erlang/OTP 26.2.5.21**（兼容矩阵内） |
+| 目录 | `D:\rabbitmq`（sbin 与 etc 直接在下层，已拍平） |
+| 数据/日志 | `D:\rabbitmq\data`（`RABBITMQ_BASE` 挪离 C 盘） |
+| 节点 | `rabbit@LAPTOP-JTK1AI0C` |
+| 管理台 | <http://localhost:15672> — **guest / guest**（仅限本机） |
+| 端口 | 4369 / 5672 / 15672 / 25672 |
+| ⚠️ 当前形态 | **独立进程**，重启机器后不会自动运行 |
+
+**重启机器后要它自动起来，需执行一次提权脚本**（注册 Windows 服务需要管理员权限）：
+
+```powershell
+# 右键 PowerShell -> 以管理员身份运行，然后：
+powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scripts\install-rabbitmq-service.ps1
+```
+
+> 执行后 RabbitMQ 与 MySQL80 / Redis 一样是**自启动服务**，日常只需 `net start|stop RabbitMQ`。
+>
+> 手动启动（不装服务时）：
+> ```powershell
+> D:\rabbitmq\sbin\rabbitmq-server.bat -detached   # 启动
+> D:\rabbitmq\sbin\rabbitmqctl.bat stop            # 停止
+> ```
+
+### Nginx（已存在，待验证）
+
+用 `D:\nginx\nginx-1.22.0-web\nginx-1.22.0-web`（1.22.0；1.18.0 也可用）。
+
+⚠️ **`Steam++.Accelerator` 占着 80 端口**，`listen 80` 会直接启动失败。
+演示前需关掉它，或把 `listen` 改成 8080（8080 目前空闲）。
 
 ### 启动后端
 
@@ -114,6 +190,10 @@ $env:REDIS_PASSWORD = "123456"
 $env:JWT_SECRET = "dev-only-secret-must-be-at-least-32-bytes-long"
 mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
+
+> ⚠️ **`JWT_SECRET` 不设会直接启动失败**，报错信息会明确说"secret 至少需要 32 字节"。
+> 这是刻意设计：一个可预测的默认密钥意味着任何人都能自己签一个令牌冒充任意用户。
+> **启动失败比"用默认密钥默默跑起来"安全得多。**
 
 > 将来会做一个 `run-dev.ps1` 把这几行收起来（参考项目 1 的脚本，
 > ⚠️ 那个脚本**必须带 UTF-8 BOM**，否则 PowerShell 5.1 按 GBK 解码会报语法错）。
@@ -137,11 +217,34 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 
 ## 已踩的坑（新会话不要重复）
 
+### ⚠️ 最重要的一类：代码看起来对、测试全绿，但功能是坏的
+
+这两个坑都发生在 T-003，**详细的症状/根因/修复见 `PROGRESS.md`**。
+它们代表一整类错误，比记住具体修法更重要：
+
+| 坑 | 症状 | 教训 |
+| --- | --- | --- |
+| **`@Transactional` 把登录失败计数一起回滚了** | 连续输错 5 次，`failed_count` 始终是 0，**账号永远不会被锁定** | 业务异常默认触发回滚。而"失败计数"恰恰是在抛异常的那条路径上写的。修法：`@Transactional(noRollbackFor = AuthException.class)` |
+| **集成测试自己加了 `@Transactional`** | 上面的 bug 被**藏了整整一轮**：MockMvc 的请求跑在测试事务里，业务侧"回滚"只回滚到 savepoint，计数看得见 | **测试级事务会掩盖真实事务边界的 bug。** 认证这条链路刻意不加它，改成 `@AfterEach` 清理数据 |
+| **`ON DUPLICATE KEY UPDATE` 没有唯一索引可触发** | 文档说 10 医生 / 140 排班，实际是 30 / 420，**每重启一次多一整套** | 写"防重复"之前先确认**唯一约束真的存在**。`doctor` 表缺 `uk_doctor_dept_name`，而排班按 `doctor_id` 生成，于是连带膨胀 |
+
+> **动手前问自己一句**：我写的这道防线，**真的接上了吗**？
+> 还是只是看起来像防线？（用测试去证明它接上了，而不是假设。）
+
+### 其他
+
 | 坑 | 症状 | 处理 |
 | --- | --- | --- |
+| **`RABBITMQ_LOGS` 指向目录** | broker 直接崩溃：`cannot_log_to_file, "d:/rabbitmq/data/log", eisdir` | 它必须是**日志文件路径**，不是目录。改成 `...\data\log\rabbit.log` |
+| **Erlang 在 Windows 不认 `HOME`** | 报 `Failed to create cookie file 'd:/Users/tianliang/.erlang.cookie': enoent`——路径被拼坏了 | Erlang 读的是 `USERPROFILE`（`init:get_argument(home)` 可验证），不是 `HOME`。**更稳的做法是不依赖它**：用 `RABBITMQ_ERLANG_COOKIE` 显式固定 cookie |
+| **服务与 CLI 的用户配置文件不同** | 服务以 LocalSystem 跑（cookie 在 `systemprofile`），你在自己终端跑 CLI（cookie 在 `C:\Users\你`）→ CLI 报连不上，而服务其实好好的 | 同上：`RABBITMQ_ERLANG_COOKIE` 固定同一个值，两边都不再依赖配置文件路径 |
+| **`escript` 遇到 UTF-8 BOM 会挂** | `syntax error before ':'` | escript 要**无 BOM**——和 PowerShell 脚本**必须带 BOM** 正好相反，两者别搞混 |
+| **Erlang 崩溃转储污染工作目录** | 工作区里出现 `erl_crash.dump`（1MB+） | 设 `ERL_CRASH_DUMP` 指到固定位置。**项目 1 也踩过这个** |
 | `INSERT ... SELECT ... JOIN(派生表) ... ON DUPLICATE KEY UPDATE` | MySQL 报 **1064 语法错误** | `ON` 歧义。改用**纯 SQL + `INSERT IGNORE`** |
 | 用存储过程 `DELIMITER $$` | Spring 脚本执行器不认 | `DELIMITER` 是 **MySQL 客户端命令**，不是 SQL |
 | 排班用 `ON DUPLICATE KEY UPDATE` 覆盖 | **每次重启会把已消耗号源重置回满** | 必须用 `INSERT IGNORE`——只补缺失，不碰业务状态 |
+| `CREATE INDEX IF NOT EXISTS` | MySQL 报 1064（**H2 支持，MySQL 不支持**） | 先查 `information_schema.STATISTICS`，或直接建 |
+| 没设 `JWT_SECRET` | 应用启动失败 | **刻意如此**：可预测的默认密钥 = 谁都能伪造令牌 |
 | 仓库目录 | 两个项目同在工作区 | 工作区是 `D:\xmdeepseek`，项目各自独立 git 仓库 |
 
 ---

@@ -27,6 +27,14 @@ ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description);
 -- -------------------------------------------------------------------
 -- 医生（10 位，虚构姓名）
 -- -------------------------------------------------------------------
+-- ⚠️ 这里的 ON DUPLICATE KEY UPDATE 依赖 doctor 上的唯一索引
+--    uk_doctor_dept_name (department_id, name)。
+--    起初漏建了这个索引，后果不是"多几行"这么轻：
+--    每位医生重复插入，而排班是按 doctor_id 生成的，
+--    于是**每次重启都连带多出一整套号源**——演示库会随重启不断膨胀。
+--    排班的时间维度也无法兜住它：唯一键是 (doctor_id, work_date, period)，
+--    而重复插入拿到的是新的 doctor_id。
+-- -------------------------------------------------------------------
 INSERT INTO doctor (department_id, name, title, specialty, intro)
 SELECT d.id, t.name, t.title, t.specialty, t.intro
   FROM department d

@@ -2,6 +2,7 @@ package com.demo.hospital;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 /**
  * 医院预约挂号系统。
@@ -15,6 +16,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <p>核心业务亮点是<b>防止号源超卖</b>，见 {@code schedule} 包的实现。
  */
 @SpringBootApplication
+@ConfigurationPropertiesScan
 public class HospitalApplication {
 
     public static void main(String[] args) {

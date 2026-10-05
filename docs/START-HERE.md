@@ -36,11 +36,16 @@ D:\xmdeepseek\hospital-appointment。
 | 后端端口 | **8081**（项目 1 用 8080，两个可以同时跑） |
 | 数据库 | **`hospital_appointment`**（独立库，不碰项目 1 的 `contract_review`） |
 | 测试 | **117 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
-| 当前进度 | **Day 1 ~ Day 3 主体全部完成**：T-001 ~ T-017 完成，**A-01 ~ A-08、A-10 已通过** |
-| **下一步** | T-019 文档定稿（README / 面试问答）；T-018 压测为可选项 |
+| 当前进度 | **T-001 ~ T-017 全部完成**，**A-01 ~ A-10 全部通过** |
+| **下一步** | T-019 收尾（文档已基本定稿）；想确认"真能跑"就跑 `scripts\verify-clean-start.ps1` |
 
-> 💡 **Day 2 的里程碑已经能演示**：挂号成功 → 异步通知落库 → 延迟消息到期自动取消并归还号源，
-> 三条链路都在**真实 RabbitMQ** 上验证过；防超卖在 **H2 与真实 MySQL 两处**都有证据。
+> 💡 **里程碑都能演示**：挂号成功 → 异步通知落库 → 延迟消息到期自动取消并归还号源，
+> 三条链路都在**真实 RabbitMQ** 上验证过（A-06 还做过"一单支付、一单不支付"的对照彩排）。
+>
+> **防超卖有三处证据**（技术内核，绝不能砍的一项）：
+> ① H2 上 1000 线程抢 20 号 → 恰好 20 单；
+> ② 真实 MySQL 同上 → 恰好 20 单（反例"先查再改"→ 83 单、剩余 -63）；
+> ③ **多实例**（两个实例共库，40 人抢 20 号）→ 全库恰好 20 单（反例 → 40 单、剩余 -20）。
 
 > **文档纪律**：这份文件与 `PROGRESS.md` 曾经落后于代码（写着"Day 0"时 T-001/T-002 已做完）。
 > **文档落后比没有文档更糟**——它会让下一个会话按错误的前提开工。每完成一个任务就更新。
@@ -233,14 +238,38 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 > D:\rabbitmq\sbin\rabbitmqctl.bat stop            # 停止
 > ```
 
-### Nginx（已存在，待验证）
+### Nginx（✅ 已完成并验证）
 
 用 `D:\nginx\nginx-1.22.0-web\nginx-1.22.0-web`（1.22.0；1.18.0 也可用）。
 
+配置在 `deploy/nginx/`：`nginx.conf`（80）与 `nginx.8080.conf`（8080），
+`root` 指向 `frontend/dist`，`location /api/` 反代到 8081。
+
 ⚠️ **`Steam++.Accelerator` 占着 80 端口**，`listen 80` 会直接启动失败。
-演示前需关掉它，或把 `listen` 改成 8080（8080 目前空闲）。
+演示前需关掉它，或直接用 8080 版配置（**默认走 8080**）。
+
+**一键起停**（会检查端口、校验配置、打印日志路径）：
+
+```powershell
+.\scripts\start-nginx.ps1          # 默认 8080
+.\scripts\start-nginx.ps1 -Port 80 # 80 端口空闲时
+.\scripts\start-nginx.ps1 -Stop
+```
+
+**验证覆盖**：`scripts\verify-e2e.ps1`（22 项，含静态资源、深层路由回退、
+完整业务闭环、错误分支）与 `scripts\verify-clean-start.ps1`（含删库删产物后的复现）。
+**均已实测通过。**
 
 ### 启动后端
+
+**推荐一键脚本**（先检查环境、缺什么就说清楚，再启动）：
+
+```powershell
+.\run-dev.ps1              # 起后端
+.\run-dev.ps1 -CheckOnly   # 只检查环境，不启动
+```
+
+手动启动（脚本里做的就是这些）：
 
 ```powershell
 cd D:\xmdeepseek\hospital-appointment
@@ -250,6 +279,10 @@ $env:REDIS_PASSWORD = "123456"
 $env:JWT_SECRET = "dev-only-secret-must-be-at-least-32-bytes-long"
 mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
+
+> ⚠️ **不需要手工建库**：JDBC URL 带 `createDatabaseIfNotExist=true`，
+> 库不存在时由连接器自动创建，表结构与演示数据随后由 `schema.sql` / `data.sql` 建好。
+> 实测：`DROP DATABASE` 后直接启动，8 秒内全部就绪。
 
 > ⚠️ **`JWT_SECRET` 不设会直接启动失败**，报错信息会明确说"secret 至少需要 32 字节"。
 > 这是刻意设计：一个可预测的默认密钥意味着任何人都能自己签一个令牌冒充任意用户。

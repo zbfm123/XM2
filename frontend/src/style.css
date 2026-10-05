@@ -1,0 +1,67 @@
+/* ===================================================================
+   全局样式。
+   刻意保持极简：Element Plus 负责组件外观，这里只做页面骨架与布局。
+   不引入 Tailwind 之类的工具类框架——决策 D-08：只用 Vue 最基础的能力。
+   =================================================================== */
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    background: #f5f7fa;
+    color: #1f2937;
+    line-height: 1.6;
+}
+
+/* 页面容器：统一最大宽度与留白 */
+.page {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 1.5rem;
+}
+
+/* 路由切换时的页面标题 */
+.page-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0 0 1rem;
+}
+
+/* 提示条：用于展示操作结果（挂号成功/失败等） */
+.hint {
+    padding: 0.6rem 0.9rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    font-size: 0.92rem;
+}
+.hint-ok {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #a7f3d0;
+}
+.hint-err {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+}
+
+/* 已约满：与前端的"按钮禁用"配合，让状态一眼可见 */
+.sold-out {
+    color: #9ca3af;
+}
+
+.muted {
+    color: #6b7280;
+    font-size: 0.9rem;
+}
+
+.toolbar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}

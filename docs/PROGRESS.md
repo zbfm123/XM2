@@ -121,6 +121,79 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：T-013 ~ T-016 Vue 前端 + A-10 完整闭环
+
+前端**一次做完四个任务**（T-013 初始化 / T-014 登录与 axios / T-015 三个展示页 / T-016 挂号与取消），
+因为它们的骨架是同一份，分四次提交反而要反复改同一批文件。
+
+- 交付：`frontend/`，Vite 5 + Vue 3.5 + vue-router 4 + axios + Element Plus
+- **验收 A-10 已通过：9 项全通过**（完整用户旅程，全部经 Nginx —— 与浏览器同一条路径）
+- 后端测试不受影响：**98 个仍全绿**
+
+#### 刻意的取舍
+
+| 决定 | 理由 |
+| --- | --- |
+| **手工搭最小骨架**，不用 `npm create vite` | 它在 Windows 上是交互式的，容易卡住；而"只装 4 个依赖 + 一个 vite.config"更快也更可控 |
+| **Element Plus 全量引入**，不按需引入 | 按需引入要多一个构建插件，而"多一个插件就多一个可能卡住的地方"（决策 D-08：能跑通 > 用全） |
+| **hash 路由**（`createWebHashHistory`） | history 模式必须配对服务端回退，否则刷新就 404。hash 模式让前端**在任何环境下刷新都不会 404**，少一个前置条件。代价是 URL 里有 `#`，对这个项目划算 |
+| 接口路径全部走 **`/api` 相对路径** | 不写死主机名：开发由 Vite proxy 转发、生产由 Nginx 转发。写死会让"开发/生产"必须改代码 |
+
+#### A-10 完整闭环（9 项，全部经 Nginx）
+
+| 步骤 | 结果 |
+| --- | --- |
+| 登录 | 用户=演示患者 ✅ |
+| 选科室 | 共 5 个，选中「内科」✅ |
+| 选医生 | 内科下 2 位，选中 张伟民（主任医师）✅ |
+| 选号源 | 2026-10-05 AM，剩余 20/20，`soldOut=false` ✅ |
+| 挂号 | 单号 `AP...396588`，状态 `PENDING_PAYMENT`，`replayed=false` ✅ |
+| 号源 -1 | 20 → 19 ✅ |
+| 我的挂号列表 | total=1，医生/科室名都在 ✅ |
+| 取消 | 状态 `CANCELLED` ✅ |
+| 号源归还 | 19 → 20 ✅ |
+
+> 顺带确认了 Nginx 提供的是**真正的 Vue 应用**而不是之前的占位页：
+> `index.html` 引用了 `assets/index-*.js`（1081 KB），该文件 HTTP 200。
+
+#### 幂等键的生成时机（T-016 最容易写错的地方）
+
+幂等的前提是"**同一次提交意图复用同一个键**"。
+如果每次点击都新生成一个键，那每次点击都是"新的一次提交"，后端会当成两笔不同的挂号——
+**幂等就白做了**。
+
+实现按 `scheduleId → key` 复用，构成三重防护：
+
+| 层 | 手段 | 挡住什么 |
+| --- | --- | --- |
+| ① 前端 | 按钮 `loading` 期间禁用 | 绝大多数双击 |
+| ② 前端 | 同一排班复用同一个键 | "请求发出去了但响应没回来，用户又点一次" |
+| ③ **后端** | `idempotency_key` 唯一索引 | 前两层都被绕过的情况 |
+
+> 面试时这样讲：**前端这两层是体验，后端那一层才是保证。**
+> 演示时可以把响应里的 `replayed` 字段点出来——它是"后端真的识别出了这是重试"的直接证据。
+
+#### `esbuild` 的 postinstall 被拦（一个环境坑）
+
+`npm install` 报告：`1 package has install scripts not yet covered by allowScripts:
+esbuild@0.21.5 (postinstall: node install.js)`。
+
+**但这次没有造成问题**：`@esbuild/win32-x64/esbuild.exe` 已经就位（平台二进制由
+optionalDependencies 直接提供，不依赖 postinstall 下载），所以 `vite build` 正常跑通
+（1672 个模块，24 秒）。
+
+⚠️ 记下来是因为**下次不一定这么幸运**：如果哪天出现
+`esbuild: Failed to install correctly`，处理方式是
+`npm approve-scripts esbuild` 或 `npm install --foreground-scripts`。
+另外注意 `npm.cmd` 把警告写到 stderr，**PowerShell 会因此报 `NativeCommandError` 并把退出码显示成 1**
+—— 别被这个假失败骗了，要看 npm 自己输出的 `added N packages`。
+
+#### 一个工程整理
+
+`frontend/dist` 被 `.gitignore` 排除（构建产物不进版本控制），
+所以之前放在 `dist/index.html` 的占位页已移到 `deploy/placeholder-index.html` 存档。
+`vite.config.js` 里也开了 `emptyOutDir: true`——避免旧产物残留导致"改了代码但页面没变"。
+
 ### 2026-10-05：T-017 Nginx 部署配置（前端未开始时先打通链路）
 
 前端（T-013~T-016）还没开始，但 Nginx 这一环**风险最高**（文档里也是这么排序的），

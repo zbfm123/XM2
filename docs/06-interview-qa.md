@@ -443,7 +443,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 ## 八、现场演示（如果让你跑一遍）
 
 ```powershell
-# ① 一键验证全部（106 个测试 + 真实 MySQL 并发 + 前端构建）
+# ① 一键验证全部（108 个测试 + 真实 MySQL 并发 + 前端构建）
 .\run-all-tests.ps1
 
 # ② 起后端
@@ -509,7 +509,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 
 | 项 | 值 |
 | --- | --- |
-| 测试总数 | **106 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试总数 | **108 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ） |
 | 端到端验收 | `scripts/verify-e2e.ps1` **22 项全通过**（A-09 + A-10，经真实 Nginx，覆盖状态机全部四条路径）|
 | 并发验证（H2 / MySQL） | 1000 线程抢 20 号 → 成功 **20**、剩余 **0**、无负数 |
 | 反向验证（错误实现） | H2 报 `expected 20 but was 64`；MySQL 超卖 **63** 个 |

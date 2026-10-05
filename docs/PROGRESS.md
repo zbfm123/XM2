@@ -147,7 +147,7 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 > `docs/07` 的"没证明"一节原本写着：
 > "**多实例部署下的行为** | 本机是单实例。不过因为依赖的是数据库行锁而非 JVM 锁，
-> **理论上多实例也成立**——但没实测过，不能声称"
+> **理论上多实例也成立**——但没实测过，不能声称
 
 **"理论上成立"正是最需要证据的地方。** 因为防超卖的价值**恰恰在多实例**：
 如果只在单实例上成立，用 `synchronized` 就够了，根本不需要那条原子 SQL。

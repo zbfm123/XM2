@@ -40,7 +40,16 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Redis：号源缓存、幂等辅助 -->
+<!--
+          ⚠️ Redis：依赖在，但**当前一处都没用到**（主代码里没有任何 RedisTemplate）。
+
+          幂等靠 idempotency_key 唯一索引、防超卖靠单条原子 UPDATE、
+          登录限流落 sys_user.failed_count —— 三件本该用 Redis 的事
+          都有更可靠的做法（见 docs/02-architecture.md 的"关于 Redis"一节）。
+
+          ⚠️ 也就是说：**引入一个不用它的依赖是负资产**——
+          多一份要解释的东西。要么删掉它，要么只用在"按 IP 限流"上。
+        -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>

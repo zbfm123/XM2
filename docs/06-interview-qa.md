@@ -414,6 +414,45 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 
 ---
 
+## 七点四、你是怎么发现"测试是假绿的"？（最能体现工程判断的一题）
+
+**这题可以主动讲，因为它比任何功能都更能说明问题**：
+
+> "我有一条测试曾经是**假绿**的——`PaymentTimeoutIntegrationTest` 里的
+> '到期自动取消'。它一直是绿的，直到我做 A-06 彩排时才发现：
+> **测试里根本没有消费者。**
+>
+> 原因是 `@RabbitListener(queues = RabbitTopologyConfig.DEFAULT_NOTIFY_QUEUE)`
+> 用了**硬编码常量** `appointment.notify.queue`，而测试配置里的队列名是
+> `appointment.notify.queue.test`。死信消息转发进测试队列后，没有任何消费者，
+> 它会一直躺在那儿。
+>
+> 那测试为什么显示通过？因为它等的是别的东西。**从测试结果里完全看不出来。**
+>
+> 物证其实一直在——RabbitMQ 管理台上 `.test` 队列堆着几十条没人消费的消息
+> （`cancel.queue.test` 66 条、`notify.queue.test` 70 条）。
+> 我一开始把它当成无关紧要的'卫生问题'，没意识到**"没人消费的消息"本身就是信号**。"
+
+**修法与顺带发现的问题**：
+
+> "修法是用 SpEL 让监听器读配置的队列名，测试才真正覆盖到消费者。
+> 顺带发现两个更实质的问题：
+>
+> ① `cancelOnTimeout` **完全不看 `expire_at`**，收到消息就取消。
+>    而队列 TTL 与业务时限是**两套独立配置**——
+>    队列 TTL 更短时订单会被**提前取消**。
+>    它自己的注释里写着'到点之后该做什么必须重新判断一次'，**但时间它没有重新判断**。
+>
+> ② 队列 TTL 是**队列属性**，队列声明后就固定了——
+>    改配置对已存在的队列无效。这个我原来只写了'需要重建队列'，
+>    没意识到它会导致两个数字分家。"
+
+> **一句话总结**：**"测试通过"和"测到了东西"是两件事。**
+> 一条绿色的测试，如果它的依赖（消费者、队列、外部服务）根本没接上，
+> 它比没有测试更危险——因为它会让人放心地不去检查。
+
+---
+
 ## 七点五、"你用了 Redis 吗？"（诚实回答，别硬撑）
 
 **这题必须诚实，因为项目里真的没用**：
@@ -443,7 +482,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 ## 八、现场演示（如果让你跑一遍）
 
 ```powershell
-# ① 一键验证全部（114 个测试 + 真实 MySQL 并发 + 前端构建）
+# ① 一键验证全部（115 个测试 + 真实 MySQL 并发 + 前端构建）
 .\run-all-tests.ps1
 
 # ② 起后端
@@ -509,7 +548,7 @@ UPDATE schedule SET remaining_slots = remaining_slots + 1
 
 | 项 | 值 |
 | --- | --- |
-| 测试总数 | **114 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试总数 | **115 个，全绿**（`mvn test`，不依赖本机 MySQL/Redis/RabbitMQ） |
 | 端到端验收 | `scripts/verify-e2e.ps1` **22 项全通过**（A-09 + A-10，经真实 Nginx，覆盖状态机全部四条路径）|
 | 并发验证（H2 / MySQL） | 1000 线程抢 20 号 → 成功 **20**、剩余 **0**、无负数 |
 | 反向验证（错误实现） | H2 报 `expected 20 but was 64`；MySQL 超卖 **63** 个 |

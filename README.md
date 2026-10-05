@@ -389,12 +389,12 @@ mvn test
 | `ScheduleConcurrencyTest` | 5 | **1000 线程抢 20 号，恰好 20 单**（A-03） |
 | `AppointmentBookingIntegrationTest` | 15 | 幂等 + 取消归还 + 越权隔离（A-04 / A-05） |
 | `MqUnavailableDoesNotBreakBookingTest` | 4 | **MQ 挂了挂号仍成功**（A-07） |
-| `PaymentTimeoutIntegrationTest` | 4 | **延迟队列自动取消**（A-06）——**需要真实 broker** |
+| `PaymentTimeoutIntegrationTest` | 5 | **延迟队列自动取消**（A-06）——**需要真实 broker** |
 | `ConcurrentBookingHttpIntegrationTest` | 2 | **并发走完整 HTTP 链路**：60 人抢 20 号 → 恰好 20 单、号源恰好 0（A-03 第三处证据）|
 | `ConcurrentCancelIntegrationTest` | 2 | **取消的并发竞态**：用户取消与超时取消同时发生，状态只变一次、号源恰好归还一次 |
 | `ConcurrentIdempotencyIntegrationTest` | 2 | **幂等的并发边界**：8 个并发请求只扣 1 个号源（防号源泄漏）|
 | `AppointmentLifecycleIntegrationTest` | 8 | **状态机在接口层真的能走完**（支付/完成/终态不可复活/越权）|
-| **合计** | **114 个，全绿** | |
+| **合计** | **115 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。
@@ -446,6 +446,42 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-concurrency-on-mysql.p
 
 用 **TTL + 死信交换机（DLX）**而不是延迟插件（决策 D-05）：插件要额外安装，而 DLX 是标准机制。
 关键点：**延迟队列自己不消费**——没有消费者，消息只能等到过期。
+
+### ⚠️ 两个"超时时间"必须对齐（演示前必看）
+
+这里有**两个独立配置**，它们必须一致，否则行为会不对：
+
+| 配置 | 作用 | 默认值 |
+| --- | --- | --- |
+| `app.appointment.payment-timeout-minutes` | 写进订单 `expire_at`（**业务时限**，权威）| `15` |
+| `app.mq.payment-ttl-millis` | 延迟**队列**的消息 TTL（决定消息何时投递过来）| `900000`（= 15 分钟）|
+
+**不一致会怎样**：
+
+- 队列 TTL **更短** → 订单被**提前取消**（用户还在付款，号就没了）
+- 业务时限 **更短** → 消费者收到消息后会被 `expire_at` 校验拦住，**自动取消等于不生效**
+
+> 好消息是第二种情况**不会造成错误**，只是一条 WARN 日志 + 取消迟到：
+> `超时取消：**尚未到支付时限**，跳过。这说明延迟队列的 TTL 比业务时限短（配置不一致，请检查）`
+>
+> 这层校验是补上的——**队列 TTL 只当作"投递延迟"，业务规则由 `expire_at` 说了算**。
+> 延迟消息只能表达"到了该检查的时间"，不能表达"到点就该执行"。
+
+**⚠️ 改 TTL 必须重建队列。** TTL 是**队列属性**，队列一旦声明过就固定了——
+改了配置对已存在的队列**没有效果**（实测：把 `payment-ttl-millis` 从 900000 改成 15000
+重启后，管理台上仍是 `900000`）。正确做法：
+
+```powershell
+# 在 RabbitMQ 管理台 (http://localhost:15672) 删掉 appointment.delay.queue 后重启应用，
+# 或用 HTTP API 删除：
+curl.exe -u guest:guest -X DELETE "http://localhost:15672/api/queues/%2F/appointment.delay.queue"
+```
+
+> **想快速演示"15 分钟自动取消"**（不想等 15 分钟）：
+> 把上面**两个配置一起**改成 `2` 秒 ——
+> `payment-timeout-minutes: 0.03333333333333333`（= 2/60 分钟）
+> 与 `payment-ttl-millis: 2000`，然后**删掉 delay 队列**再启动。
+> 只改一个会让它们分家。集成测试用的就是这个组合。
 
 ### 开关与降级（这是 A-07 的落点）
 

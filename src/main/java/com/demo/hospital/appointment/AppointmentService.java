@@ -4,6 +4,7 @@ import com.demo.hospital.appointment.domain.Appointment;
 import com.demo.hospital.appointment.domain.AppointmentStatus;
 import com.demo.hospital.appointment.dto.AppointmentView;
 import com.demo.hospital.appointment.mapper.AppointmentMapper;
+import com.demo.hospital.config.AppointmentProperties;
 import com.demo.hospital.appointment.mapper.AppointmentRow;
 import com.demo.hospital.common.BusinessException;
 import com.demo.hospital.common.ErrorCode;
@@ -40,13 +41,16 @@ public class AppointmentService {
     private final AppointmentMapper appointmentMapper;
     private final ScheduleMapper scheduleMapper;
     private final Notifier notifier;
+    private final AppointmentProperties properties;
 
     public AppointmentService(AppointmentMapper appointmentMapper,
                               ScheduleMapper scheduleMapper,
-                              Notifier notifier) {
+                              Notifier notifier,
+                          AppointmentProperties properties) {
         this.appointmentMapper = appointmentMapper;
         this.scheduleMapper = scheduleMapper;
         this.notifier = notifier;
+        this.properties = properties;
     }
 
     // ==================================================================
@@ -81,11 +85,11 @@ public class AppointmentService {
      * @param userId         当前登录用户
      * @param scheduleId     排班 id
      * @param idempotencyKey 幂等键，由客户端提供
-     * @param paymentTimeoutMinutes 待支付超时分钟数；≤0 时用默认值
+     * @param paymentTimeoutMinutes 待支付超时分钟数（支持小数）；≤0 时用默认值
      */
     @Transactional(noRollbackFor = BusinessException.class)
     public AppointmentView book(Long userId, Long scheduleId, String idempotencyKey,
-                                int paymentTimeoutMinutes) {
+                                double paymentTimeoutMinutes) {
 
         // ---- ① 幂等快路径 ----
         Appointment existing = appointmentMapper.findByIdempotencyKey(idempotencyKey);
@@ -127,8 +131,12 @@ public class AppointmentService {
         appointment.setPeriod(schedule.getPeriod());
         appointment.setFee(schedule.getFee());
         appointment.setStatus(AppointmentStatus.PENDING_PAYMENT);
-        int timeout = paymentTimeoutMinutes > 0 ? paymentTimeoutMinutes : DEFAULT_PAYMENT_TIMEOUT_MINUTES;
-        appointment.setExpireAt(LocalDateTime.now().plusMinutes(timeout));
+        // ⚠️ 用 plusSeconds 而不是 plusMinutes：业务时限要支持秒级，
+        //    否则测试里配不出"和队列 TTL 一样短"的时限（详见 AppointmentProperties 的注释）。
+        double timeoutMinutes = paymentTimeoutMinutes > 0
+                ? paymentTimeoutMinutes
+                : DEFAULT_PAYMENT_TIMEOUT_MINUTES;
+        appointment.setExpireAt(LocalDateTime.now().plusSeconds((long) Math.round(timeoutMinutes * 60.0)));
 
         try {
             appointmentMapper.insert(appointment);
@@ -359,6 +367,57 @@ public class AppointmentService {
         if (appointment.getStatus() != AppointmentStatus.PENDING_PAYMENT) {
             log.info("超时取消：订单当前状态为 {}，不属于待支付，跳过（这是正确行为）: no={}",
                     appointment.getStatus(), appointmentNo);
+            return false;
+        }
+
+        // ==============================================================
+        // ⚠️ 再判断一次"到底到点了没有"
+        // ==============================================================
+        //
+        // 【为什么必须有这一层】延迟消息的 TTL 由**队列参数**决定，
+        // 而队列参数在队列**首次声明时就固定了**——改了配置也不会作用于已存在的队列。
+        // 也就是说，"消息什么时候投递过来"这个时间点**不保证**等于
+        // "订单的支付时限"（app.appointment.payment-ttl-millis）。
+        //
+        // 两者一旦不一致会怎样：
+        //   · 队列 TTL 比业务时限**短** -> 订单会被**提前取消**（用户还在付款就没了）
+        //   · 队列 TTL 比业务时限**长** -> 订单晚取消一会儿（可接受，但语义不一致）
+        //
+        // 【实测踩到的坑】做 A-06 彩排时想把等待时间缩短，用
+        // APP_APPOINTMENT_PAYMENT_TTL_MILLIS=15000 启动，结果延迟队列的
+        // x-message-ttl 仍然是 900000（队列早就声明过了）——
+        // 而业务侧 expire_at 已经变成 15 秒。两个数字就此**分家**。
+        //
+        // 【结论】唯一权威的时间判据是**订单自己的 expire_at**。
+        // 队列 TTL 只当作"投递延迟"，业务规则必须自己说了算。
+        //
+        // 这一层与上面的状态判断**各管一件事**，两者都要有：
+        //   · 状态判断 -> 防"已支付的被取消"
+        //   · 时间判断 -> 防"还没到点就被取消"
+        //
+        // 注意：这里把"没到点"记成 **WARN** 而不是 INFO ——
+        // 它意味着队列 TTL 与业务时限不一致，是**配置问题**，
+        // 需要人看一眼。正常的"已支付所以跳过"才该是 INFO。
+        LocalDateTime expireAt = appointment.getExpireAt();
+        if (expireAt == null) {
+            // 防御：正常情况下 expire_at 一定有值（下单时写入）。
+            // 真为 null 说明数据被外部改坏了——按业务时限从创建时间推算，
+            // 而不是"直接取消"（宁可晚取消，不可早取消）。
+            expireAt = appointment.getCreatedAt() == null
+                    ? LocalDateTime.now()
+                    : appointment.getCreatedAt()
+                            .plusSeconds((long) Math.round(properties.paymentTimeoutMinutes() * 60.0));
+            log.warn("超时取消：订单缺少 expire_at，按业务时限从创建时间推算: no={} 推算={}",
+                    appointmentNo, expireAt);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (now.isBefore(expireAt)) {
+            log.warn("超时取消：**尚未到支付时限**，跳过。"
+                            + "这说明延迟队列的 TTL 比业务时限短（配置不一致，请检查）: "
+                            + "no={} 现在={} 时限={} 还差 {} ms",
+                    appointmentNo, now, expireAt,
+                    java.time.Duration.between(now, expireAt).toMillis());
             return false;
         }
 

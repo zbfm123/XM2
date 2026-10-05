@@ -90,6 +90,8 @@ class PaymentTimeoutIntegrationTest {
     @Autowired private ScheduleMapper scheduleMapper;
     @Autowired private AppointmentMapper appointmentMapper;
     @Autowired private AppointmentProperties appointmentProperties;
+    /** 用于核对"业务时限与队列 TTL 是否对齐"。 */
+    @Autowired private com.demo.hospital.config.MqProperties mqProperties;
 
     /** 用它探测 broker 是否可达，并在测试后清理测试队列。 */
     @Autowired(required = false) private RabbitAdmin rabbitAdmin;
@@ -292,13 +294,75 @@ class PaymentTimeoutIntegrationTest {
     }
 
     @Test
-    @DisplayName("超时时间来自配置而非硬编码——否则测试只能真的等 15 分钟")
-    void paymentTimeoutIsConfigurable() {
-        // 本 profile 配置成 15 分钟（应用侧语义），延迟队列 TTL 单独配成 1 秒。
-        // 这条测试守的是"这两件事都是配置项、没有被写死"。
-        assertThat(appointmentProperties.paymentTimeoutMinutes())
-                .as("payment-timeout-minutes 必须是可配置的，否则测试没法把它改短")
-                .isEqualTo(15);
+    @DisplayName("业务时限与队列 TTL 必须对齐——否则自动取消要么提前、要么不生效")
+    void paymentTimeoutIsAlignedWithQueueTtl() {
+        // ⚠️ 这条断言是**改过的**，值得说明为什么。
+        //
+        // 原来断言的是 paymentTimeoutMinutes() == 15，注释写着
+        // "本 profile 配置成 15 分钟，延迟队列 TTL 单独配成 1 秒"——
+        // 也就是说，旧设计里这两个数字**本来就是不一致的**，
+        // 而当时能通过，只是因为 cancelOnTimeout 根本不看 expire_at。
+        //
+        // 补上"到点了没有"的校验之后，不一致立刻暴露：队列 TTL 1 秒把消息投出来，
+        // 而业务时限还是 15 分钟，取消被时限校验拦住，自动取消测试直接失败。
+        //
+        // 现在两个配置都取 2 秒，所以这里守的不变量变成**两者一致**：
+        //   业务时限（expire_at 的依据） == 队列 TTL（消息何时投递）
+        //
+        // 为什么不断言"都等于 2 秒"：把数字写死会让"想调成 3 秒的人"
+        // 也要来改测试。守"两者一致"这个**关系**，既抓得住分家，又不妨碍调参。
+        double businessSeconds = appointmentProperties.paymentTimeoutMinutes() * 60.0;
+        long queueTtlMillis = mqProperties.paymentTtlMillis();
+
+        assertThat(Math.round(businessSeconds * 1000.0))
+                .as("队列 TTL（%d ms）必须与业务时限（%.4f 分钟 ≈ %.1f 秒）对齐。"
+                                + "不对齐的后果：队列 TTL 更短 -> 订单被提前取消；"
+                                + "业务时限更短 -> 时限校验会拦住取消，自动取消等于没生效。",
+                        queueTtlMillis, appointmentProperties.paymentTimeoutMinutes(), businessSeconds)
+                .isEqualTo(queueTtlMillis);
+    }
+
+    @Test
+    @DisplayName("时限确实被业务代码用上了：expire_at 与创建时间之差等于配置的时限")
+    void expireAtDerivesFromConfiguredTimeout() throws Exception {
+        // 上一条只证明了"配置读进来了"，这条证明"配置真的被用上了"——
+        // 两者不是一回事：配置读进来却没被业务代码使用，是一类很常见的错误
+        // （字段连着配置，但业务分支里用了硬编码的默认值）。
+        Long scheduleId = newSchedule(5);
+        String token = login();
+
+        String res = book(token, scheduleId)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String no = objectMapper.readTree(res).get("appointmentNo").asText();
+
+        var saved = appointmentMapper.findByNo(no);
+        assertThat(saved.getExpireAt())
+                .as("下单必须写入 expire_at —— 超时取消的时间判据就靠它")
+                .isNotNull();
+
+        // ⚠️ 用毫秒比较、不用 getSeconds()：后者会**截断**。
+        //    1998 ms 会被截成 1 秒，而期望是 2 秒——报出来的差异是"差 1 秒"，
+        //    看起来像业务 bug，实际只是断言方式选错了。
+        long actualMillis = java.time.Duration
+                .between(saved.getCreatedAt(), saved.getExpireAt()).toMillis();
+        long expectedMillis = Math.round(appointmentProperties.paymentTimeoutMinutes() * 60_000.0);
+
+        // ⚠️ 用**容差**而不是严格相等。
+        //
+        // 原因：created_at 是**数据库**写入的时间戳（精度、时钟都可能与 JVM 有细微差别），
+        // 而 expire_at 是应用侧用 LocalDateTime.now() 算的。实测两者相差 7ms 左右。
+        // 强求逐毫秒相等，测的就是"两个时钟能对多齐"，而不是业务逻辑——
+        // 那种断言会随机变红，然后被人加 @Disabled，比没有更糟。
+        //
+        // 容差 2 秒足够小：真正的 bug（硬编码 900000ms）差了 898 秒，一抓一个准。
+        assertThat(actualMillis)
+                .as("expire_at - createdAt 应当约等于配置的时限（%d ms，容差 2000 ms 用于"
+                                + "吸收 createdAt 由数据库写入带来的精度差）。"
+                                + "如果这里是 900000 ms 而配置是 2000 ms，"
+                                + "说明业务代码用了硬编码默认值。",
+                        expectedMillis)
+                .isCloseTo(expectedMillis, org.assertj.core.data.Offset.offset(2000L));
     }
 
     // ------------------------------------------------------------------
@@ -338,7 +402,9 @@ class PaymentTimeoutIntegrationTest {
             return false;
         }
         try {
-            var props = rabbitAdmin.getQueueProperties(RabbitTopologyConfig.DEFAULT_NOTIFY_QUEUE);
+            // 探测**测试队列**（而不是开发队列）：我们要确认的是
+            // "本测试用的这套队列能不能取到属性"，那才是后续断言的前提。
+            var props = rabbitAdmin.getQueueProperties(TEST_NOTIFY_QUEUE);
             return props != null;
         } catch (Exception e) {
             return false;

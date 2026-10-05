@@ -55,7 +55,18 @@ public class NotificationConsumer {
      * 这样写的好处是消息体在 RabbitMQ 管理台里是<b>可读的 JSON</b>，
      * 演示时可以直接点开给面试官看。
      */
-    @RabbitListener(queues = RabbitTopologyConfig.DEFAULT_NOTIFY_QUEUE)
+    // ⚠️ 这里用 SpEL 从配置读队列名，而不是写常量。
+//
+// 【为什么必须这样】踩过一个很隐蔽的坑：原来写的是
+//   @RabbitListener(queues = RabbitTopologyConfig.DEFAULT_NOTIFY_QUEUE)
+// 而测试配置里的队列名是 appointment.notify.queue.test。
+// 结果：**测试里根本没有消费者**——消息被投到 .test 队列后就一直躺着，
+// 而测试也恰好没断言通知，于是"全绿"了却完全没验证到消费者。
+// 只有去 RabbitMQ 管理台才看得出来（.test 队列里堆着 66+ 条没人消费的消息）。
+//
+// 用 SpEL 之后，队列名跟随 app.mq.notify-queue，
+// 测试就能真正走到这个消费者的代码。
+@RabbitListener(queues = "#{@queueNames.notifyQueueName()}")
     public void onNotification(NotificationMessage message) {
         try {
             log.info("收到通知消息: no={} type={} doctor={}",

@@ -7,11 +7,22 @@
 #    本 profile 只在显式指定时启用，见 PaymentTimeoutIntegrationTest 的说明。
 #
 # 两个关键覆盖：
-#   1. payment-ttl-millis 从 15 分钟改成 **1 秒** ——
-#      否则验证"到期自动取消"要真的等 15 分钟，那种测试没有人会跑。
+#   1. 把"15 分钟"压成 **2 秒** —— 否则验证"到期自动取消"要真的等 15 分钟，
+#      那种测试没有人会跑。
 #   2. 队列名换成 *_test 后缀 ——
 #      ⚠️ TTL 是**队列属性**，一旦队列已存在就没法改。
 #      用独立队列名可以让测试反复运行而不必手工删队列。
+#
+# ⚠️⚠️ 下面这两个数字**必须对齐**，这是踩过坑的地方：
+#
+#     app.appointment.payment-timeout-minutes  ->  订单的 expire_at（业务时限）
+#     app.mq.payment-ttl-millis                ->  延迟队列的消息 TTL（投递延迟）
+#
+#   最初业务时限写的是 15（分钟），而队列 TTL 是 1 秒 —— 两者**分家**了。
+#   当时测试能过，只是因为 cancelOnTimeout **根本没看 expire_at**
+#   （收到消息就取消）。后来补上"到点了没有"的校验，这个不一致立刻暴露。
+#
+#   现在两者都取 2 秒：2/60 分钟 = 2.0 秒，与 payment-ttl-millis 一致。
 # ===================================================================
 spring:
   datasource:
@@ -52,12 +63,16 @@ app:
     max-failures: 5
     lock-minutes: 15
   appointment:
-    payment-timeout-minutes: 15
+    # ⚠️ 2/60 = 0.033333... 分钟 = **恰好 2.0 秒**，必须与下面的 payment-ttl-millis 对齐。
+    #    用分数写而不是写 0.0333 —— 后者是 1998 毫秒，差 2 毫秒，
+    #    会让"两者对齐"的断言失败（这个坑已经踩过一次）。
+    payment-timeout-minutes: 0.03333333333333333
   mq:
     # ⚠️ 这个测试**必须**打开 MQ：它验证的正是"延迟消息真的会到期并触发取消"
     enabled: true
-    # 1 秒。测试等它 ── 这就是把"15 分钟"变成"1 秒"的地方
-    payment-ttl-millis: 1000
+    # 2 秒。测试等它 ── 这就是把"15 分钟"变成"2 秒"的地方。
+    # ⚠️ 必须与上面的 payment-timeout-minutes 对齐，否则时限校验会拦住自动取消。
+    payment-ttl-millis: 2000
     notify-queue: appointment.notify.queue.test
     delay-queue: appointment.delay.queue.test
     cancel-queue: appointment.cancel.queue.test

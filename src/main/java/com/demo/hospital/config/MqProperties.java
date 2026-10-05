@@ -14,6 +14,21 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param delayQueue         延迟队列名
  * @param cancelQueue        取消队列名
  */
+/**
+ * ⚠️ 显式给了 bean 名 {@code mqProperties}，这是**必需的**，不是装饰。
+ *
+ * <p>{@code @ConfigurationPropertiesScan}（见 HospitalApplication）注册出来的 bean 名
+ * 是 {@code "app.mq-com.demo.hospital.config.MqProperties"} 这种带前缀的全限定名，
+ * 而 {@code @RabbitListener(queues = "#{@mqProperties.notifyQueue()}")}
+ * 里的 SpEL **按名字**找 bean。没有这个显式名，上下文启动会直接失败：
+ *
+ * <pre>
+ * A component required a bean named 'mqProperties' that could not be found.
+ * </pre>
+ *
+ * <p>为什么监听器要用 SpEL 取队列名而不是写常量——见 NotificationConsumer 上的说明：
+ * 常量会导致**测试里没有消费者**，而这一点从测试结果里看不出来。
+ */
 @ConfigurationProperties(prefix = "app.mq")
 public record MqProperties(
         boolean enabled,

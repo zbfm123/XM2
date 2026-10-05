@@ -56,7 +56,11 @@ public class PaymentTimeoutConsumer {
      *
      * <p>参数类型是 {@code String}：发出去的就是业务单号本身。
      */
-    @RabbitListener(queues = RabbitTopologyConfig.DEFAULT_CANCEL_QUEUE)
+    // ⚠️ 同 NotificationConsumer：用 SpEL 读配置的队列名，而不是写常量。
+//    写常量的后果是"测试里没有消费者"，而这一点**从测试结果里看不出来**——
+//    延迟消息会安静地躺在 .test 队列里，测试却因为别的原因（直接调 service）
+//    而通过。详见 NotificationConsumer 上的同一段说明。
+@RabbitListener(queues = "#{@queueNames.cancelQueueName()}")
     public void onPaymentTimeout(String appointmentNo) {
         try {
             if (appointmentNo == null || appointmentNo.isBlank()) {

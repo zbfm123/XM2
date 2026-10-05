@@ -61,18 +61,14 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(name = "app.mq.enabled", havingValue = "true")
 public class RabbitTopologyConfig {
 
-    /**
-     * 消费者监听的队列名。
-     *
-     * <p>⚠️ {@code @RabbitListener(queues = ...)} 的取值必须是<b>编译期常量</b>，
-     * 因此这里没法直接写成 {@code mqProperties.notifyQueue()}。
-     * 默认值与应用配置的默认值一致；若在配置里改了队列名，
-     * 消费端要用 {@code queuesToDeclare} 或单独指定——本项目不改，故用常量。
-     */
-    public static final String DEFAULT_NOTIFY_QUEUE = "appointment.notify.queue";
-
-    /** 取消消费者监听的队列名（同上，需编译期常量）。 */
-    public static final String DEFAULT_CANCEL_QUEUE = "appointment.cancel.queue";
+    // ⚠️ 这里原本有 DEFAULT_NOTIFY_QUEUE / DEFAULT_CANCEL_QUEUE 两个常量，
+    //    已删除。它们被 @RabbitListener 直接使用，而常量的后果是
+    //    **测试里根本没有消费者**——测试用的是 *.test 队列，
+    //    消息投进去后一直没人消费，而测试恰好没断言通知，于是"全绿"却是假的。
+    //
+    //    现在队列名通过 QueueNameConfig 的 queueNames bean 用 SpEL 读取，
+    //    跟随 app.mq.* 配置，测试才能真正覆盖消费者。
+    //    见 NotificationConsumer 与 QueueNameConfig 上的说明。
 
     private final MqProperties mqProperties;
 

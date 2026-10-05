@@ -12,7 +12,7 @@
 | 阶段 | **Day 1 ~ Day 3 主体全部完成**（T-001 ~ T-017；仅剩 T-019 收尾） |
 | 当前任务 | **T-019 文档定稿**（其余任务已完成；T-018 压测按文档主动砍掉） |
 | 截止 | **2026-10-07** |
-| 测试 | **114 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试 | **115 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
 | 最后验证 | 2026-10-05：`scripts/verify-e2e.ps1` **18 项全通过**（A-09 + A-10，经真实 Nginx）；A-07 用**真 broker 停机**验证 8 项全通过 |
 | 环境 | MySQL / Redis / RabbitMQ **三者均可用**（RabbitMQ 待服务化，见下） |
 
@@ -121,6 +121,90 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：⚠️ 修掉一条**假绿**的测试 —— 测试里根本没有消费者
+
+**这是本次最有价值的发现**，因为它意味着一条验收曾经是**假的**。
+
+#### 怎么发现的
+
+做 A-06 彩排时想缩短等待时间，用
+`APP_APPOINTMENT_PAYMENT_TTL_MILLIS=15000` 启动应用，结果延迟队列的
+`x-message-ttl` 仍然是 900000。顺着这条线查下去，发现两件事：
+
+**问题一：延迟队列的 TTL 与业务时限是两套独立配置，且可以分家**
+
+| 配置 | 作用 | 默认值 |
+| --- | --- | --- |
+| `app.appointment.payment-timeout-minutes` | 写进订单 `expire_at`（**业务时限**）| 15 分钟 |
+| `app.mq.payment-ttl-millis` | 延迟**队列**的消息 TTL（决定消息何时投递）| 900000 ms |
+
+队列 TTL 是**队列属性**，队列首次声明时就固定了——改配置**对已存在的队列无效**
+（这个坑其实代码注释里写过，但只写了"需要重建队列"，没提两者会分家）。
+
+更关键的是：`cancelOnTimeout` **完全没有校验 `expire_at`**，
+收到消息就取消。所以队列 TTL 比业务时限短时，订单会被**提前取消**。
+它自己的注释里明明写着"延迟消息只能表达'到了该检查的时间'……
+到点之后该做什么，必须重新判断一次"——**而它没有重新判断时间**。
+
+**问题二（更严重）：测试里的消费者压根没接上**
+
+`@RabbitListener(queues = RabbitTopologyConfig.DEFAULT_NOTIFY_QUEUE)`——
+用的是**硬编码常量** `appointment.notify.queue`，而测试配置里的队列名是
+`appointment.notify.queue.test`。
+
+后果：延迟消息死信转发进 `cancel.queue.test` 之后，**没有任何消费者**，
+它会一直躺在那里。而那个"到期自动取消"的测试之所以显示通过，
+是因为它等的是**别的东西**（服务层被别处调用过）。
+
+> **它是一条假绿的测试。** 从测试结果里完全看不出来——
+> 只有去 RabbitMQ 管理台，才会看到 `.test` 队列里堆着几十条没人消费的消息
+> （实测 `cancel.queue.test` 66 条、`notify.queue.test` 70 条）。
+> 那些堆积正是"没有消费者"的**物证**，而我最初把它当成了纯粹的卫生问题。
+
+#### 修法（四步）
+
+| # | 改动 | 目的 |
+| --- | --- | --- |
+| 1 | 新增 `QueueNameConfig`，用 **SpEL** 让监听器读配置的队列名 | 测试能真正覆盖消费者 |
+| 2 | `cancelOnTimeout` 增加 **`expire_at` 校验** | 业务规则自己说了算，队列 TTL 只当投递延迟 |
+| 3 | 业务时限改为**秒级**（`double` 分钟 + `plusSeconds`）| 测试能把两个数字**精确对齐** |
+| 4 | 测试配置两者都取 **2 秒**（`2/60` 分钟）| 不再分家 |
+
+#### 修的过程中又踩了三个小坑（都值得记）
+
+1. **给 `@ConfigurationProperties` 的 record 加 `@Component` 会被拒绝**：
+   > MqProperties is annotated with `@ConstructorBinding` but it is defined as a regular bean
+
+   改用 `@Bean("queueNames")` 暴露**稳定的 bean 名**（SpEL 按名字找 bean，
+   而 `@ConfigurationPropertiesScan` 生成的名字是 `app.mq-com.demo...MqProperties` 这种全限定名）。
+
+2. **SpEL 里返回 `Supplier<String>` 是错的**：`queues` 属性要的是 String，
+   而 `#{...}` 求值出来是个 Supplier 对象。**能被 SpEL 求值 ≠ 求值结果对**——
+   这种错误编译期完全看不出来。改成 record 的直白访问器即可。
+
+3. **断言精度**：`Duration.getSeconds()` 会**截断**——1998ms 变成 1 秒，
+   报出来是"差 1 秒"，看着像业务 bug，其实只是断言方式选错了。
+   另外 `created_at` 是**数据库**写入的时间戳，与 JVM 的 `now()` 有约 7ms 差，
+   所以最终用了 2 秒容差（真 bug 是 898 秒的差，一抓一个准）。
+
+#### 结果
+
+| 项 | 修前 | 修后 |
+| --- | --- | --- |
+| 自动取消测试是否真的覆盖消费者 | ❌ **假绿** | ✅ 消费者真的接上了（`cancel.queue.test` 有消费者、消息被消费）|
+| `.test` 队列消息堆积 | 66 + 70 条永久堆积 | **0 条** |
+| 业务时限与队列 TTL | 分家（15 分钟 vs 1 秒）| **对齐（都是 2 秒）**，并有测试守这个不变量 |
+| 测试数 | 114 | **115** |
+
+> **最大的教训**：
+> **"测试通过"和"测到了东西"是两件事。**
+> 一条绿色的测试，如果它的依赖（消费者、队列、外部服务）根本没接上，
+> 它就是一条**会骗人的测试**——而且比没有测试更危险，
+> 因为它会让人放心地不去检查。
+>
+> 这次的物证（`.test` 队列里堆积的几十条消息）其实一直在那里，
+> 我最初把它当成了无关紧要的卫生问题。**"没人消费的消息"本身就是信号。**
+
 ### 2026-10-05：并发走完整 HTTP 挂号链路（A-03 的第三处证据）
 
 **为什么还要再做一处**：`ScheduleConcurrencyTest` 直接调
@@ -205,7 +289,7 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 改用 **`purgeQueue`（清空消息，保留队列）**，而不是 `deleteQueue`。
 
-连续跑 3 次整类，全部通过（26 秒左右）；全量 114 个测试稳定全绿。
+连续跑 3 次整类，全部通过（26 秒左右）；全量 115 个测试稳定全绿。
 
 > **教训（值得记住）**：
 > **"清理干净"和"把东西删掉"不是一回事。**
@@ -682,7 +766,7 @@ expected: 9
 | 脚本 | 作用 |
 | --- | --- |
 | `run-dev.ps1` | 一键启动后端；先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚；`-CheckOnly` 只检查不启动 |
-| `run-all-tests.ps1` | 一键跑完 114 个测试 + 真实 MySQL 并发验证 + 前端构建，并打印汇总 |
+| `run-all-tests.ps1` | 一键跑完 115 个测试 + 真实 MySQL 并发验证 + 前端构建，并打印汇总 |
 | `scripts/start-nginx.ps1` | 启动/停止 Nginx；自动按端口选配置、检查产物与后端、检查语法、打印访问地址 |
 
 三个脚本都带 UTF-8 BOM 并**实测通过**。实现时刻意避开两个已踩过的坑：

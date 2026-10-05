@@ -35,7 +35,7 @@ D:\xmdeepseek\hospital-appointment。
 | 到期 | **2026-10-07** |
 | 后端端口 | **8081**（项目 1 用 8080，两个可以同时跑） |
 | 数据库 | **`hospital_appointment`**（独立库，不碰项目 1 的 `contract_review`） |
-| 测试 | **114 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试 | **115 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
 | 当前进度 | **Day 1 ~ Day 3 主体全部完成**：T-001 ~ T-017 完成，**A-01 ~ A-08、A-10 已通过** |
 | **下一步** | T-019 文档定稿（README / 面试问答）；T-018 压测为可选项 |
 

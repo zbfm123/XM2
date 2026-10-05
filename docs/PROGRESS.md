@@ -121,6 +121,72 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 
 ## 已完成
 
+### 2026-10-05：T-017 Nginx 部署配置（前端未开始时先打通链路）
+
+前端（T-013~T-016）还没开始，但 Nginx 这一环**风险最高**（文档里也是这么排序的），
+所以先用一个占位页把链路打通，避免把风险留到最后。
+
+- 交付：`deploy/nginx/nginx.conf`（listen 80）、`deploy/nginx/nginx.8080.conf`（仅改端口）、
+  自带的 `mime.types`（让配置不依赖 nginx 安装目录）
+- 两份都是**完整可 `-c` 使用**的配置（自带 events/http 上下文），不是需要自己嵌的 server 片段
+
+#### ⚠️ 已知阻塞：80 端口被 `Steam++.Accelerator` 占用
+
+`listen 80` 直接启动失败，报：
+
+```
+bind() to 0.0.0.0:80 failed (10013: An attempt was made to access
+a socket in a way forbidden by its permissions)
+```
+
+（这个现象和单纯的"端口被占用"不同：Windows 上被某些程序占用的端口会报 10013 权限错误，
+而不是常见的"address already in use"，容易误判成权限问题。）
+
+**处理方式二选一**：演示前关掉那个加速器；或者直接用 `nginx.8080.conf`。
+所以配置做了两份，**只差 listen 那一行**——这样"换端口"不会变成"改一堆配置"。
+
+#### 验证结果：**8 项全通过**（`nginx.8080.conf`，真实后端 + 真实 nginx）
+
+| 验证项 | 结果 |
+| --- | --- |
+| 静态首页（Nginx 直接提供） | HTTP 200，`Server: nginx/1.22.0` ✅ |
+| **深层路由回退**（`/appointments` → `index.html`） | HTTP 200 ✅ |
+| `/api` 反向代理 | HTTP 200，body 是后端 JSON ✅ |
+| `/health` 别名 | HTTP 200 ✅ |
+| 登录经代理 | 拿到 224 字符的 JWT ✅ |
+| 业务查询经代理（排班） | `total=14`、`remainingSlots=20` ✅ |
+| 未认证访问 | HTTP 401（JSON，不是 Nginx 的 HTML）✅ |
+| 不存在的接口 | HTTP **404**（见下，这条本来是 500）✅ |
+| 后端不可达时（额外测的） | HTTP **502** —— Nginx 正确表达了"上游故障"✅ |
+
+#### 两个配置细节，都属于"写错不会报错、只会行为不对"
+
+**① `proxy_pass` 结尾不能有多余的 `/`。**
+写成 `proxy_pass http://127.0.0.1:8081/;` 会**剥掉 `/api` 前缀**，
+后端收到 `/auth/login` 而不是 `/api/auth/login`，全部接口 404。
+这次验证里"登录经代理"那一项专门守的就是它。
+
+**② `include mime.types` 的路径相对"配置文件所在目录"，不是 nginx prefix。**
+我一开始把站点配置放在 `conf/sites/` 下，于是 nginx 去找 `conf/sites/mime.types`，
+报 `CreateFile() ... failed`。解法是把 `mime.types` 一起放进 `deploy/nginx/`，
+让配置自包含——顺带也不再依赖"nginx 装在哪个目录"。
+
+#### 顺带抓到一个真 bug：请求不存在的路径返回 500
+
+验证第 ⑥ 项（"未匹配的 /api 是否被正确转发给后端"）时，后端回了 **500 "服务器内部错误"**。
+
+- **根因**：`GlobalExceptionHandler` 没有处理 Spring 6.1 的 `NoResourceFoundException`，
+  异常掉进兜底分支变成 500
+- **为什么是问题**：**路径打错了是调用方的问题，不是服务端崩了**。
+  用户看到 500 会去查服务端日志，而真正的原因是他的 URL 拼错了
+- **修法**：加 `@ExceptionHandler(NoResourceFoundException.class)` → 404 + `NOT_FOUND`
+- **防回归**：`AuthIntegrationTest.unknownPathShouldReturn404NotServerError()`
+
+> 这是第二次出现同一类问题（第一次是"缺少必填参数返回 500"）：
+> **少写一个 `@ExceptionHandler` 不会编译报错，只会静默返回错的状态码。**
+> 而两次都是被"真实链路的手工验证"发现的，不是被单元测试发现的——
+> 因为没人会想到去测一个"我根本没写的接口"。
+
 ### 2026-10-05：T-010 RabbitMQ / T-011 MQ 不可用不影响挂号 / T-012 超时自动取消
 
 - **验收 A-06（延迟队列自动取消）与 A-07（MQ 挂了挂号仍成功）已通过**

@@ -15,6 +15,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -94,6 +95,29 @@ public class GlobalExceptionHandler {
                 request.getMethod(), request.getRequestURI(), e.getCode(), e.getMessage());
 
         return ResponseEntity.status(status).body(base(e.getCode().name(), e.getMessage(), request));
+    }
+
+    /**
+     * 请求了不存在的接口路径，例如 {@code GET /api/nonexistent}。
+     *
+     * <p>⚠️ 这个分支是补上的，之前会掉进兜底变成 <b>500 "服务器内部错误"</b>——
+     * 但**路径打错了是调用方的问题，不是服务端崩了**。
+     * 用户看到 500 会去查服务端日志，而真正的原因是他的 URL 拼错了。
+     *
+     * <p>它是被 T-017 的 Nginx 验证暴露出来的：当时想确认"未匹配的 /api 路径
+     * 是否被正确转发给后端"，结果后端回了一个 500。
+     * 这与之前"缺少必填参数返回 500"是同一类问题：
+     * <b>少写一个 @ExceptionHandler 不会编译报错，只会静默返回错的状态码。</b>
+     *
+     * <p>Spring 6.1 / Boot 3.2 起，静态资源未命中抛的是
+     * {@code NoResourceFoundException}（不再有默认的 404 转发）。
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(
+            NoResourceFoundException e, HttpServletRequest request) {
+        log.info("请求了不存在的路径: {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(base(ErrorCode.NOT_FOUND.name(), "接口不存在：" + request.getRequestURI(), request));
     }
 
     /**

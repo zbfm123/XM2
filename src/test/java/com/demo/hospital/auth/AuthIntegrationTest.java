@@ -461,6 +461,29 @@ class AuthIntegrationTest {
                 .andExpect(jsonPath("$.code").value("TOKEN_INVALID"));
     }
 
+    /**
+     * 请求不存在的接口路径。
+     *
+     * <p>⚠️ 这条是补的，因为原来的行为是 <b>500 "服务器内部错误"</b>——
+     * 而"路径打错了"是调用方的问题，不是服务端崩了。
+     * 用户看到 500 会去查服务端日志，而真正的原因是他的 URL 拼错了。
+     *
+     * <p>它是被 T-017 的 Nginx 验证暴露的：当时想确认"未匹配的 /api 路径
+     * 是否被正确转发给后端"，结果后端回了一个 500。
+     * 与"缺少必填参数返回 500"同一类：<b>少写一个 @ExceptionHandler 不会编译报错，
+     * 只会静默返回错的状态码。</b>
+     */
+    @Test
+    @DisplayName("请求不存在的接口返回 404（不是 500）——路径打错是调用方的问题")
+    void unknownPathShouldReturn404NotServerError() throws Exception {
+        register(phone, TEST_ACCOUNT_SECRET);
+        String token = loginAndGetToken(phone, TEST_ACCOUNT_SECRET);
+
+        mockMvc.perform(get("/api/nonexistent-endpoint").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
     // ------------------------------------------------------------------
     // 辅助方法
     // ------------------------------------------------------------------

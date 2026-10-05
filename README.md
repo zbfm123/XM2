@@ -127,6 +127,7 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 | `.\run-all-tests.ps1` | **一键跑完全部验证**：106 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
 | `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
+| `.\scripts\verify-multi-instance.ps1` | **多实例防超卖验证**：起两个实例共用一个库，验证全库只有一个赢家（补上文档里原本标注"没实测过"的一项）|
 | `.\scripts\verify-clean-start.ps1` | **干净机器复现验证**：真的删库删产物，再照本文档走一遍到端到端验收（6 个阶段）|
 | `.\scripts\check-api-contract.ps1` | **前后端 API 契约检查**：前端调用的方法是否都已定义、接口是否真能打通、返回字段是否齐全（需后端在跑）|
 | `.\scripts\check-docs.ps1` | **文档一致性检查**：测试数量、README 引用的脚本是否存在、`.ps1` 的 BOM、过时措辞 |
@@ -465,6 +466,36 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-concurrency-on-mysql.p
 
 **H2 与 MySQL 有方言差异**，涉及 MySQL 特有写法的地方（原子 UPDATE、唯一索引冲突、
 生成列）必须**在真实 MySQL 上再手工验证一次**。
+
+### A-03 的第三处证据：多实例部署
+
+**这一处最关键**——防超卖的价值恰恰在多实例：如果只在单实例上成立，
+用 `synchronized` 就够了，根本不需要那条原子 SQL。
+
+```powershell
+$env:DB_PASSWORD = "123456"
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-multi-instance.ps1
+```
+
+它起**两个后端实例**（8081 / 8082）指向**同一个库**，让 40 个用户
+**交替打到两个实例上**抢 20 个号。实测：
+
+```
+实例 8081  成功 10  被拒 10
+实例 8082  成功 10  被拒 10
+                ---- 全库合计 ----
+成功 20、被拒 20、剩余号源 0、订单 20 条、5xx 0
+```
+
+**两个实例各处理一半，但全库只产生 20 条订单** —— 证明防线在**数据库**上（行锁 + 原子 UPDATE），
+不是 JVM 锁。
+
+> **反向验证**：把原子的 `AND remaining_slots > 0` 去掉后重跑，
+> **40 个请求全部成功、剩余号源 -20**（每个实例都以为自己还有 20 个号）。
+> 这正是"依赖应用层判断"在多实例下的必然结果——
+> 而**单实例测试永远发现不了**，因为单实例下应用层判断恰好是对的。
+
+脚本按 id 与手机号前缀精确清理，跑完开发库回到演示状态，不碰演示数据。
 
 ---
 

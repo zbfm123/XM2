@@ -122,7 +122,7 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 
 | 脚本 | 用途 |
 | --- | --- |
-| `.\run-dev.ps1` | **一键启动后端**：先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚，再启动 |
+| `.\run-dev.ps1` | **一键启动后端**：先检查 JDK/Maven/MySQL（必需）与 Redis/RabbitMQ（**可选**）及端口，缺什么就说清楚，再启动 |
 | `.\run-dev.ps1 -CheckOnly` | 只检查环境、不启动（快速确认"这台机器能不能跑"） |
 | `.\run-all-tests.ps1` | **一键跑完全部验证**：106 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
@@ -166,7 +166,7 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 | --- | --- | --- |
 | `JWT_SECRET` | **是** | **不设会直接启动失败**，这是刻意设计；**长度必须 ≥ 32 字节** |
 | `DB_PASSWORD` | 是 | MySQL 口令（`application-dev.yml` 里默认值为空） |
-| `REDIS_PASSWORD` | 是 | Redis 口令 |
+| `REDIS_PASSWORD` | **否** | Redis 口令。⚠️ 当前代码**没有使用 Redis**，不设也不影响运行（见 `docs/02` 的"关于 Redis"）|
 | `JAVA_HOME` | 是 | 必须指向 `D:\java\jdk-21` |
 | `DB_USERNAME` / `REDIS_HOST` / `REDIS_PORT` | 否 | 默认 `root` / `127.0.0.1` / `6379` |
 | `MQ_ENABLED` | 否 | 默认 `true`。设 `false` 可验证 A-07（MQ 关闭时挂号仍成功） |

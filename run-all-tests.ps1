@@ -42,7 +42,7 @@ function Write-Step($text) {
 }
 
 # -------------------------------------------------------------------
-Write-Step "1/4  后端测试（98 个，H2 内存库）"
+Write-Step "1/5  后端测试（98 个，H2 内存库）"
 
 & mvn -B test 2>&1 | Select-String -Pattern "Tests run:.*Skipped: \d+$|BUILD" | Select-Object -Last 4
 
@@ -69,10 +69,10 @@ if (Test-Path $reportDir) {
 
 # -------------------------------------------------------------------
 if ($SkipMysql) {
-    Write-Step "2/4  真实 MySQL 并发验证（已跳过 -SkipMysql）"
+    Write-Step "2/5  真实 MySQL 并发验证（已跳过 -SkipMysql）"
     $results["MySQL 并发验证"] = "跳过"
 } else {
-    Write-Step "2/4  真实 MySQL 并发验证（A-03 第二处证据）"
+    Write-Step "2/5  真实 MySQL 并发验证（A-03 第二处证据）"
     $env:DB_PASSWORD = $DbPassword
     & powershell -ExecutionPolicy Bypass -File ".\scripts\verify-concurrency-on-mysql.ps1" 2>&1 |
         Select-Object -Last 30
@@ -88,10 +88,10 @@ if ($SkipMysql) {
 
 # -------------------------------------------------------------------
 if ($SkipFrontend) {
-    Write-Step "3/4  前端构建（已跳过 -SkipFrontend）"
+    Write-Step "3/5  前端构建（已跳过 -SkipFrontend）"
     $results["前端构建"] = "跳过"
 } elseif (Test-Path "frontend\node_modules") {
-    Write-Step "3/4  前端构建（Vite）"
+    Write-Step "3/5  前端构建（Vite）"
     Push-Location frontend
     & npm.cmd run build 2>&1 | Select-String -Pattern "built in|error|Error|dist/" | Select-Object -Last 8
     Pop-Location
@@ -103,13 +103,13 @@ if ($SkipFrontend) {
         $failed++
     }
 } else {
-    Write-Step "3/4  前端构建（前端依赖未安装）"
+    Write-Step "3/5  前端构建（前端依赖未安装）"
     Write-Host "先在 frontend 目录执行：npm.cmd install" -ForegroundColor Yellow
     $results["前端构建"] = "跳过（需先 npm.cmd install）"
 }
 
 # -------------------------------------------------------------------
-Write-Step "4/4  文档一致性（测试数量 / 脚本引用 / BOM / 过时措辞）"
+Write-Step "4/5  文档一致性（测试数量 / 脚本引用 / BOM / 过时措辞）"
 
 & powershell -ExecutionPolicy Bypass -File ".\scripts\check-docs.ps1" 2>&1 | Select-Object -Last 12
 
@@ -118,6 +118,32 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     $results["文档一致性"] = "有**不一致**（见上方）"
     $failed++
+}
+
+# -------------------------------------------------------------------
+# API 契约检查需要后端在跑。这里**不去自动起后端**（会和调用方已起的冲突），
+# 而是探测一下：能连上就跑，连不上就明确说"跳过+怎么补跑"。
+# 静默跳过是最糟的——会让人以为检查过了。
+Write-Step "5/5  前后端 API 契约"
+
+$backendUp = $false
+try {
+    $null = Invoke-WebRequest "http://127.0.0.1:8081/api/health" -UseBasicParsing -TimeoutSec 3
+    $backendUp = $true
+} catch { }
+
+if ($backendUp) {
+    & powershell -ExecutionPolicy Bypass -File ".\scripts\check-api-contract.ps1" 2>&1 | Select-Object -Last 16
+    if ($LASTEXITCODE -eq 0) {
+        $results["API 契约"] = "通过"
+    } else {
+        $results["API 契约"] = "有**不一致**（见上方）"
+        $failed++
+    }
+} else {
+    Write-Host "  [跳过] 后端 8081 未运行，无法做动态契约检查" -ForegroundColor Yellow
+    Write-Host "         补跑方式：另一个窗口 .\run-dev.ps1，再执行本脚本" -ForegroundColor Gray
+    $results["API 契约"] = "跳过（后端未运行）"
 }
 
 # -------------------------------------------------------------------

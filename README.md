@@ -320,7 +320,7 @@ mvn test
 
 | 测试类 | 用例数 | 说明 |
 | --- | --- | --- |
-| `AuthIntegrationTest` | 22 | 认证链路（A-01） |
+| `AuthIntegrationTest` | 23 | 认证链路（A-01）+ 不存在路径返回 404 |
 | `AuthServiceTest` | 7 | 注册/锁定分支（含并发注册） |
 | `SysUserMapperTest` | 4 | 唯一索引真的会拦 |
 | `CatalogQueryIntegrationTest` | 13 | 科室/医生/排班查询（A-02） |
@@ -329,7 +329,7 @@ mvn test
 | `AppointmentBookingIntegrationTest` | 15 | 幂等 + 取消归还 + 越权隔离（A-04 / A-05） |
 | `MqUnavailableDoesNotBreakBookingTest` | 4 | **MQ 挂了挂号仍成功**（A-07） |
 | `PaymentTimeoutIntegrationTest` | 4 | **延迟队列自动取消**（A-06）——**需要真实 broker** |
-| **合计** | **97 个，全绿** | |
+| **合计** | **98 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。

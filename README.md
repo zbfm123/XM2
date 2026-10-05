@@ -107,7 +107,32 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 mysql -uroot -p123456 -e "CREATE DATABASE IF NOT EXISTS hospital_appointment DEFAULT CHARSET utf8mb4;"
 ```
 
-### 2. 设环境变量并启动后端（端口 8081）
+### 1.5 一键脚本（推荐）
+
+省掉手输环境变量——**手输 5 行就一定会有人漏一行**，而漏掉 `JWT_SECRET` 的后果是启动失败。
+
+| 脚本 | 用途 |
+| --- | --- |
+| `.\run-dev.ps1` | **一键启动后端**：先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚，再启动 |
+| `.\run-dev.ps1 -CheckOnly` | 只检查环境、不启动（快速确认"这台机器能不能跑"） |
+| `.\run-all-tests.ps1` | **一键跑完全部验证**：98 个后端测试 + 真实 MySQL 并发验证 + 前端构建 |
+| `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
+| `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
+| `.\scripts\verify-concurrency-on-mysql.ps1` | 单独跑 A-03 的真实 MySQL 并发验证 |
+| `.\scripts\install-rabbitmq-service.ps1` | 把 RabbitMQ 注册成自启动服务（**需管理员权限**） |
+| `.\push.ps1 -Message "..."` | 提交前检查（BOM 守卫 + 敏感信息扫描）并推送 |
+
+```powershell
+# 典型用法
+$env:DB_PASSWORD = "123456"          # 脚本里也有默认值，这里只是显式化
+.\run-dev.ps1
+```
+
+> ⚠️ 所有 `.ps1` **必须带 UTF-8 BOM**。无 BOM 时 Windows PowerShell 5.1 会按 GBK 解码，
+> 中文注释被解成乱码并**破坏语法**。`push.ps1` 里有一道递归守卫专门拦这个
+> （它最初只扫项目根目录，漏掉了 `scripts/`，已修）。
+
+### 2. 手动启动后端（端口 8081）
 
 ```powershell
 cd D:\xmdeepseek\hospital-appointment
@@ -132,11 +157,32 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 | `REDIS_PASSWORD` | 是 | Redis 口令 |
 | `JAVA_HOME` | 是 | 必须指向 `D:\java\jdk-21` |
 | `DB_USERNAME` / `REDIS_HOST` / `REDIS_PORT` | 否 | 默认 `root` / `127.0.0.1` / `6379` |
+| `MQ_ENABLED` | 否 | 默认 `true`。设 `false` 可验证 A-07（MQ 关闭时挂号仍成功） |
 | `SPRING_PROFILES_ACTIVE` | 否 | 默认 `dev` |
 
 > **为什么没设 `JWT_SECRET` 就启动失败，而不是给个默认值？**
 > 一个可预测的默认密钥意味着**任何人都能自己签一个令牌冒充任意用户**。
 > 启动失败比"用默认密钥默默跑起来"安全得多——这也是刻意的取舍，不是配置疏漏。
+
+### 2.5 启动前端（Vue 3）
+
+```powershell
+cd D:\xmdeepseek\hospital-appointment\frontend
+npm.cmd install          # ⚠️ 必须用 npm.cmd，npm 被执行策略拦住
+npm.cmd run dev          # 开发服务器 http://localhost:5173
+```
+
+开发服务器已配好 `/api` 转发（见 `vite.config.js`），所以**开发期不涉及跨域**，
+前端代码里一律写 `/api/xxx` 相对路径。
+
+生产构建：
+
+```powershell
+npm.cmd run build        # 产物在 frontend/dist，由 Nginx 托管
+```
+
+> ⚠️ `npm.cmd` 会把警告写到 stderr，**PowerShell 会因此把退出码显示成 1**，
+> 那是假失败——要看 npm 自己输出的 `added N packages` / `built in Ns`。
 
 ### 3. 验证进程活着
 
@@ -451,6 +497,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-concurrency-on-mysql.p
 | 任务拆分与验收标准（T-001 ~ T-019 + 砍法顺序） | [docs/04-tasks-and-acceptance.md](docs/04-tasks-and-acceptance.md) |
 | 新技术学习清单（三样新技术的最小集） | [docs/05-learning-plan.md](docs/05-learning-plan.md) |
 | **进度与踩坑**（真实状态，不美化） | [docs/PROGRESS.md](docs/PROGRESS.md) |
+| **面试问答**（30 秒版本 + 20 个必问问题的答法与证据） | [docs/06-interview-qa.md](docs/06-interview-qa.md) |
 
 ---
 

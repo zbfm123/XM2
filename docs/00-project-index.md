@@ -33,6 +33,7 @@
 | 任务拆分与验收标准 | [04-tasks-and-acceptance.md](04-tasks-and-acceptance.md) |
 | **新技术学习清单** | [05-learning-plan.md](05-learning-plan.md) |
 | 进度与踩坑 | [PROGRESS.md](PROGRESS.md) |
+| **面试问答（带着这个去面试）** | [06-interview-qa.md](06-interview-qa.md) |
 
 ---
 

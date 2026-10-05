@@ -108,7 +108,7 @@ if ($null -eq $actualTests) {
         Ok "文档里的测试数量与实测一致（$actualTests）"
     } else {
         foreach ($mm in $mismatch) {
-            # 历史记录里出现旧数字是正常的（例如"69 → 98 个"），所以只提示
+            # 历史记录里出现旧的总数描述是正常的（那是当时进度的快照），所以只提示
             Hint ("{0}:{1} 提到 {2} 个（实测 {3}）：{4}" -f $mm.File, $mm.Line, $mm.Claimed, $actualTests, $mm.Text)
         }
         Write-Host "      说明：历史记录里出现旧数字是正常的，请确认那处是否**当前状态**。" -ForegroundColor Gray

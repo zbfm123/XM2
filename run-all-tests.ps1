@@ -5,8 +5,8 @@
 #   powershell -ExecutionPolicy Bypass -File .\run-all-tests.ps1
 #   powershell -ExecutionPolicy Bypass -File .\run-all-tests.ps1 -SkipMysql
 #
-# 它依次做三件事：
-#   1. mvn test                    —— 98 个测试（H2 + 内存 Redis，不依赖任何本机服务）
+# 它依次做五件事：
+#   1. mvn test                    —— 全部后端测试（H2 + 内存 Redis，不依赖任何本机服务）
 #   2. 真实 MySQL 并发验证          —— A-03 的第二处证据（H2 的锁实现与 InnoDB 不同）
 #   3. 前端构建                     —— 确认 Vue 能打出产物
 #
@@ -42,7 +42,7 @@ function Write-Step($text) {
 }
 
 # -------------------------------------------------------------------
-Write-Step "1/5  后端测试（98 个，H2 内存库）"
+Write-Step "1/5  后端测试（H2 内存库；数量见下方汇总）"
 
 & mvn -B test 2>&1 | Select-String -Pattern "Tests run:.*Skipped: \d+$|BUILD" | Select-Object -Last 4
 

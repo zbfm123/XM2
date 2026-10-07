@@ -35,7 +35,7 @@ D:\xmdeepseek\hospital-appointment。
 | 到期 | **2026-10-07** |
 | 后端端口 | **8081**（项目 1 用 8080，两个可以同时跑） |
 | 数据库 | **`hospital_appointment`**（独立库，不碰项目 1 的 `contract_review`） |
-| 测试 | **117 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试 | **121 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
 | 当前进度 | **T-001 ~ T-017 全部完成**，**A-01 ~ A-10 全部通过** |
 | **下一步** | T-019 收尾（文档已基本定稿）；想确认"真能跑"就跑 `scripts\verify-clean-start.ps1` |
 
@@ -162,7 +162,7 @@ D:\xmdeepseek\hospital-appointment。
 
 **这一段曾经是"下一步做前端 T-013"，那是 2026-10-05 早些时候的状态。**
 前端、Nginx、文档都已经做完了，留在这里会误导新会话去重做已完成的事。
-现在如实记录：**A-01 ~ A-10 全部通过，117 个测试全绿。**
+现在如实记录：**A-01 ~ A-10 全部通过，121 个测试全绿。**
 
 ### 想确认"它真的能跑起来"，跑这一条
 
@@ -203,7 +203,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-clean-start.ps1
 | --- | --- |
 | JDK 21 | `D:\java\jdk-21`；⚠️ PATH 上的 `java` 是 **1.8**，必须设 `JAVA_HOME` |
 | MySQL | Windows 服务 `MySQL80`，`root` / `123456` |
-| Redis | Windows 服务 `Redis`，`127.0.0.1:6379`，口令 `123456`<br>⚠️ **当前代码没用到它**，不跑也能启动（已实测：指向空端口照样跑通登录与查询）|
+| Redis | Windows 服务 `Redis`，`127.0.0.1:6379`，口令 `123456`<br>✅ 2026-10-07 起**真实用于号源查询缓存**；缓存故障会自动降级为直查数据库 |
 | **npm** | ⚠️ **必须用 `npm.cmd`**，`npm` 被执行策略拦住 |
 | **Erlang** | ✅ `D:\erl-26.2.5.21`（OTP 26.2.5.21，zip 解压，不写 C 盘） |
 | **RabbitMQ** | ✅ `D:\rabbitmq`（4.1.8）；⚠️ **服务化待执行**（见下） |

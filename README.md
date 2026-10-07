@@ -124,7 +124,7 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 | --- | --- |
 | `.\run-dev.ps1` | **一键启动后端**：先检查 JDK/Maven/MySQL（必需）与 Redis/RabbitMQ（**可选**）及端口，缺什么就说清楚，再启动 |
 | `.\run-dev.ps1 -CheckOnly` | 只检查环境、不启动（快速确认"这台机器能不能跑"） |
-| `.\run-all-tests.ps1` | **一键跑完全部验证**：106 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
+| `.\run-all-tests.ps1` | **一键跑完全部验证**：124 个后端测试 + 真实 MySQL 并发验证 + 前端构建 + **文档一致性** |
 | `.\scripts\start-nginx.ps1` | 启动 Nginx（默认 8080），托管前端产物并反代 `/api` |
 | `.\scripts\start-nginx.ps1 -Stop` | 停止 Nginx |
 | `.\scripts\verify-multi-instance.ps1` | **多实例防超卖验证**：起两个实例共用一个库，验证全库只有一个赢家（补上文档里原本标注"没实测过"的一项）|

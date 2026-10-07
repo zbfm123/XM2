@@ -30,7 +30,7 @@ param(
     [string]$DbUser = "root",
     [string]$DbPassword = "123456",
     [int]$NginxPort = 8080,
-    # 保留删掉的库不重建（只做破坏性检查用，一般不指定）
+    # 跳过测试订单清理（脚本自己造的那些），用于事后手工查看数据
     [switch]$KeepData,
     # 跳过耗时步骤（调试用）
     [switch]$SkipTests,
@@ -100,7 +100,7 @@ if (-not (Test-Port 3306)) {
 }
 
 # Redis / RabbitMQ 都是**可选**，这里只提示
-if (Test-Port 6379) { Info "Redis 6379 在监听（当前代码未使用，可选）" } else { Info "Redis 未监听 —— 不影响本项目" }
+if (Test-Port 6379) { Info "Redis 6379 在监听（号源查询缓存生效）" } else { Info "Redis 未监听 —— 不影响本项目" }
 if (Test-Port 5672) { Info "RabbitMQ 5672 在监听（异步通知会真正投递）" } else { Info "RabbitMQ 未监听 —— 应用会用 NoopNotifier，挂号仍正常（A-07）" }
 
 if ($missing.Count -gt 0) {

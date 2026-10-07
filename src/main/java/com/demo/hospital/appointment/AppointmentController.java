@@ -22,12 +22,18 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 挂号接口。
  *
- * <p>三个端点，正好对应需求 F-03 的核心：
+ * <p>五个端点（列表曾在只有三个端点时写成「三个端点」，后来补了支付与完成没同步改）：
  * <ul>
  *   <li>{@code POST /api/appointments} —— 提交挂号（幂等，A-04）</li>
  *   <li>{@code POST /api/appointments/{no}/cancel} —— 取消并归还号源（A-05）</li>
+ *   <li>{@code POST /api/appointments/{no}/pay} —— 模拟支付成功，推进到 PAID</li>
+ *   <li>{@code POST /api/appointments/{no}/complete} —— 就诊完成，推进到 COMPLETED</li>
  *   <li>{@code GET  /api/appointments} —— 我的挂号（只能看到自己的）</li>
  * </ul>
+ *
+ * <p>⚠️ {@code /pay} 与 {@code /complete} 是<b>模拟</b>端到端流程用的，
+ * 不是真实支付网关回调：本项目的重点是并发正确性与状态机，
+ * 真接支付会把范围撑开却稀释重点。
  *
  * <p>鉴权：全部<b>需登录</b>，且未在白名单里登记 —— 由 {@code SecurityConfig}
  * 的默认拒绝自动兜住，不需要为本接口改任何安全配置。

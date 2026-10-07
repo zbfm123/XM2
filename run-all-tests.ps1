@@ -5,10 +5,12 @@
 #   powershell -ExecutionPolicy Bypass -File .\run-all-tests.ps1
 #   powershell -ExecutionPolicy Bypass -File .\run-all-tests.ps1 -SkipMysql
 #
-# 它依次做五件事：
+# 它依次做五件事（以前这里只列了 3 件，脚本实际跑 5 步）：
 #   1. mvn test                    —— 全部后端测试（H2 + 内存 Redis，不依赖任何本机服务）
 #   2. 真实 MySQL 并发验证          —— A-03 的第二处证据（H2 的锁实现与 InnoDB 不同）
 #   3. 前端构建                     —— 确认 Vue 能打出产物
+#   4. 文档一致性                 —— 测试数量 / 脚本引用 / BOM / 过时措辞
+#   5. 前后端 API 契约            —— 前端调用的路径与后端实际注册的对得上
 #
 # 为什么要有它：
 #   "干净机器按 README 能起完整站点"（验收 A-09）这句话，

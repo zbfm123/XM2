@@ -184,6 +184,8 @@ $bookFile = Join-Path $tmp "book.json"
 [IO.File]::WriteAllText($bookFile, "{`"scheduleId`":$($slot.id),`"idempotencyKey`":`"$key`"}", [Text.UTF8Encoding]::new($false))
 
 $book = & curl.exe -s "$base/api/appointments" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary "@$bookFile" | ConvertFrom-Json
+$script:createdNos = @()
+$script:createdNos += $book.appointmentNo
 Check "挂号" ($book.status -eq 'PENDING_PAYMENT') "单号=$($book.appointmentNo) replayed=$($book.replayed)"
 
 $after = (& curl.exe -s "$base/api/schedules?doctorId=$($doc.id)&size=20" -H $authHeader | ConvertFrom-Json).items |
@@ -210,6 +212,7 @@ $bookFile2 = Join-Path $tmp "book2.json"
 [IO.File]::WriteAllText($bookFile2, "{`"scheduleId`":$($slot2.id),`"idempotencyKey`":`"$([guid]::NewGuid())`"}", [Text.UTF8Encoding]::new($false))
 $book2 = & curl.exe -s "$base/api/appointments" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary "@$bookFile2" | ConvertFrom-Json
 
+$script:createdNos += $book2.appointmentNo
 $paid = & curl.exe -s "$base/api/appointments/$($book2.appointmentNo)/pay" -X POST -H "Content-Type: application/json" -H $authHeader --data-binary '{}' | ConvertFrom-Json
 Check "模拟支付 -> PAID" ($paid.status -eq 'PAID') "状态=$($paid.status)"
 
@@ -263,10 +266,20 @@ if ($KeepRunning) {
     Write-Host "[OK] 后端已停"
 
     # 清掉本次验证产生的订单（脚本自己造的，不能留给开发库）
+    #
+    # ⚠️ 这里以前是一句 "DELETE FROM hospital_appointment.notification;
+    #    DELETE FROM hospital_appointment.appointment;" —— **清空整张表**，
+    #    与上面那句注释（“清掉本次验证产生的订单”）**直接矛盾**，
+    #    会把开发者手工造的演示订单/缓存验证数据一并删掉。
+    #    现在只删本次跑出来的那几个单号。
     $env:MYSQL_PWD = $DbPassword
-    & mysql -u root -e "DELETE FROM hospital_appointment.notification; DELETE FROM hospital_appointment.appointment;" 2>&1 | Out-Null
-    $left = (& mysql -u root -N -B -e "SELECT COUNT(*) FROM hospital_appointment.appointment;" 2>&1) -join ''
-    Write-Host "[OK] 测试订单已清理（剩余 $left 条）"
+    if ($script:createdNos -and $script:createdNos.Count -gt 0) {
+        $quoted = ($script:createdNos | ForEach-Object { "'" + $_ + "'" }) -join ','
+        & mysql -u root -e "DELETE FROM hospital_appointment.notification WHERE appointment_no IN ($quoted); DELETE FROM hospital_appointment.appointment WHERE appointment_no IN ($quoted);" 2>&1 | Out-Null
+        Write-Host "[OK] 本次验证产生的 $($script:createdNos.Count) 个订单已清理（未动其它数据）"
+    } else {
+        Write-Host "[!] 没有记录到单号，跳过清理（宁可留下也不能误删）" -ForegroundColor Yellow
+    }
 
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "[OK] 临时文件已清理"

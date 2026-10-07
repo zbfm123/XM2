@@ -59,7 +59,7 @@ public class RedisTestConfig {
             return null;
         }).when(valueOps).set(anyString(), anyString());
 
-        // 带 TTL 写入（登出黑名单、幂等键会用到）
+        // 带 TTL 写入（目前无调用方；登出黑名单已被关掉、幂等靠唯一索引）
         doAnswer(inv -> {
             String key = inv.getArgument(0);
             String value = inv.getArgument(1);

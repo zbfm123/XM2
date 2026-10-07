@@ -79,15 +79,16 @@ if (Test-Port 3306) {
     $problems += "MySQL"
 }
 
-# Redis —— **可选**。
-# ⚠️ 实测：应用完全不依赖 Redis（指向一个没人监听的端口照样启动、登录、查询）。
-#    pom 里有 starter-data-redis，但主代码一处都没用到（详见 docs/02 的"关于 Redis"）。
+# Redis —— **可选，但已真实使用**（号源查询缓存，Cache-Aside）。
+#    不起来也能跑：缓存读写失败会降级为直查数据库（有测试覆盖）。
+#    代价只是失去缓存带来的提速，功能不受影响。
+#    见 docs/02-architecture.md 的"关于 Redis"一节。
 #    所以这里只提示，不阻止启动——把可选项写成必需项，
 #    只会让人在一个其实无关的服务上白费时间。
 if (Test-Port 6379) {
-    Write-Host "[OK] Redis 6379 在监听（当前代码未使用，属技术栈预留）"
+    Write-Host "[OK] Redis 6379 在监听（号源查询缓存生效）"
 } else {
-    Write-Host "[!] Redis 6379 未监听 —— **不影响本项目运行**（代码里没有用 Redis）" -ForegroundColor Yellow
+    Write-Host "[!] Redis 6379 未监听 —— 不影响运行（缓存会降级为直查库，只是没了提速）" -ForegroundColor Yellow
 }
 
 # RabbitMQ（**可选**：A-07 明确要求 MQ 不可用时挂号仍然成功）

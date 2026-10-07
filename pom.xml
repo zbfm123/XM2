@@ -41,14 +41,22 @@
         </dependency>
 
 <!--
-          ⚠️ Redis：依赖在，但**当前一处都没用到**（主代码里没有任何 RedisTemplate）。
+          Redis：**已真实使用**（2026-10-07）—— 号源查询缓存（Cache-Aside）。
 
-          幂等靠 idempotency_key 唯一索引、防超卖靠单条原子 UPDATE、
-          登录限流落 sys_user.failed_count —— 三件本该用 Redis 的事
-          都有更可靠的做法（见 docs/02-architecture.md 的"关于 Redis"一节）。
+          用途：ScheduleService.listByDoctor 的查询结果缓存，
+                挂号 / 取消 / 超时取消三处失效，缓存故障自动降级为直查数据库。
+          见 docs/02-architecture.md 的「关于 Redis」一节。
 
-          ⚠️ 也就是说：**引入一个不用它的依赖是负资产**——
-          多一份要解释的东西。要么删掉它，要么只用在"按 IP 限流"上。
+          ⚠️ 关键边界：**Redis 不参与扣减**。号源扣减走单条原子 UPDATE，
+          完全不经过缓存，所以缓存再旧也不可能多卖一个号 ——
+          缓存只允许影响「快慢」，不允许影响「对错」。
+
+          历史（保留，因为那次判断本身是对的）：这段注释一度写着
+          「依赖在，但当前一处都没用到」「引入一个不用它的依赖是负资产」。
+          那时幂等靠唯一索引、防超卖靠原子 UPDATE、限流落库，
+          三件本该用 Redis 的事确实都有更可靠的做法 ——
+          **「不用它」这个判断没错，错的是「引了却不用」。**
+          后来在唯一真正合适的场景（读多写少的号源查询）上把它用起来了。
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

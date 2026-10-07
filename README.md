@@ -47,10 +47,15 @@
 | 前端 | Vue 3 + Vite + Element Plus + axios + vue-router | ✅ 已完成（T-013 ~ T-016）；5 个页面，开发端口 **5173** |
 | 部署 | Nginx | ✅ 已完成（T-017）；端口：后端 **8081**、前端 dev **5173**、Nginx **8080**（80 被 Steam++ 占用）|
 
-> ⚠️ `pom.xml` 里**刻意还没有** `spring-boot-starter-amqp`。
-> 理由写在 pom 的注释里：本机 RabbitMQ 装机顺序在后，先加依赖会产生自动配置噪音；
-> 而"先在没有 MQ 的环境下把业务跑通"正好就是需求 A-07（MQ 不可用不影响主流程）。
-> **T-010 接入 MQ 时再加。**
+> ✅ `spring-boot-starter-amqp` 已在 `pom.xml` 中（T-010 接入 MQ 时加入），
+> MQ 拓扑、延迟队列、消费者均已实现（见下方第七节）。
+>
+> ⚠️ **这段以前写的是"pom 里刻意还没有 amqp，T-010 接入时再加"**——
+> 那是 T-001 时期的状态，一直留在 README 里没删，
+> 而同一份 README 第七节又大篇幅描述 MQ 拓扑，**自相矛盾**。
+> MQ 默认关闭（`app.mq.enabled` 默认 false，dev 下由 `MQ_ENABLED:true` 打开），
+> 所以"没有 MQ 也能把业务跑通"这件事依然成立——只是理由从"还没加依赖"
+> 变成了"依赖在、但功能可以关掉"。后者才是 A-07 真正要证明的东西。
 
 ### 数据模型（6 张表）
 
@@ -111,7 +116,7 @@ Get-Service MySQL80, Redis | Select-Object Name, Status
 > 实测过：**把整个库 `DROP` 掉，直接启动应用** → 3 秒内库被建出来，
 > 6 张表、5 科室 / 10 医生 / 140 条排班 / 1 个演示账号全部就位，
 > 且 `dedup_key` 生成列与两个关键唯一索引都按定义创建。
-> 之后 `scripts/verify-e2e.ps1` 在**这个全新的库上**依旧 18 项全通过。
+> 之后 `scripts/verify-e2e.ps1` 在**这个全新的库上**依旧 22 项全通过。
 >
 > ⚠️ 这条便利的代价是：**连接账号需要有 `CREATE` 权限**（本地 `root` 有）。
 > 生产环境通常不给应用账号建库权限——那时应当去掉这个参数、由 DBA 预先建库。
@@ -169,7 +174,7 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 | --- | --- | --- |
 | `JWT_SECRET` | **是** | **不设会直接启动失败**，这是刻意设计；**长度必须 ≥ 32 字节** |
 | `DB_PASSWORD` | 是 | MySQL 口令（`application-dev.yml` 里默认值为空） |
-| `REDIS_PASSWORD` | **否** | Redis 口令。⚠️ 当前代码**没有使用 Redis**，不设也不影响运行（见 `docs/02` 的"关于 Redis"）|
+| `REDIS_PASSWORD` | **否** | Redis 口令。✅ 代码**已使用 Redis**（号源查询缓存）。不设也不影响启动——缓存故障会自动降级为直查数据库（有测试覆盖），但会失去缓存带来的提速 |
 | `JAVA_HOME` | 是 | 必须指向 `D:\java\jdk-21` |
 | `DB_USERNAME` / `REDIS_HOST` / `REDIS_PORT` | 否 | 默认 `root` / `127.0.0.1` / `6379` |
 | `MQ_ENABLED` | 否 | 默认 `true`。设 `false` 可验证 A-07（MQ 关闭时挂号仍成功） |
@@ -275,10 +280,24 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-clean-start.ps1
 
 **应用层是"让用户看到友好提示"，唯一索引是"保证数据一定正确"**——本项目两条第二道防线：
 
+> ⚠️ 这份 README 曾写成 `uk_appointment_user_schedule (user_id, schedule_id)`，**那是错的**（而且 `docs/04` 专门记录过"任务书写 `(user_id,schedule_id)` 是错的"）：
+> 直接用 `(user_id, schedule_id)` 会导致**取消一次以后就再也挂不上这个号**——
+> 约束表达的是"历史上只能挂过一次"，而我们要的是"同时只能有一个活跃订单"。
+> 生成列 `dedup_key` 就是为了把"活跃"这个条件写进约束里。
+
 ```sql
-UNIQUE KEY uk_appointment_idem (idempotency_key)                -- 防重复提交（幂等）
-UNIQUE KEY uk_appointment_user_schedule (user_id, schedule_id)  -- 防同一人抢两个号
-UNIQUE KEY uk_schedule_slot (doctor_id, work_date, period)      -- 防重复排班
+-- ① 幂等：同一 idempotency_key 只产生一单
+UNIQUE KEY uk_appointment_idem (idempotency_key)
+
+-- ② 活跃订单去重：生成列 dedup_key 只对"未取消"的订单等于 user_id，
+--    已取消的为 NULL（MySQL 的 UNIQUE 允许多个 NULL，天然不参与约束）。
+--    这样表达的是"同一人对同一排班只能有一个**活跃**订单"，
+--    而不是"历史上只能挂过一次"——取消后必须能再挂。
+dedup_key  BIGINT AS (IF(status = 'CANCELLED', NULL, user_id)) STORED
+UNIQUE KEY uk_appointment_active_slot (dedup_key, schedule_id)
+
+-- ③ 防重复排班
+UNIQUE KEY uk_schedule_slot (doctor_id, work_date, period)
 ```
 
 ---
@@ -424,14 +443,18 @@ mvn test
 | `ConcurrentCancelIntegrationTest` | 2 | **取消的并发竞态**：用户取消与超时取消同时发生，状态只变一次、号源恰好归还一次 |
 | `ConcurrentIdempotencyIntegrationTest` | 2 | **幂等的并发边界**：8 个并发请求只扣 1 个号源（防号源泄漏）|
 | `AppointmentLifecycleIntegrationTest` | 8 | **状态机在接口层真的能走完**（支付/完成/终态不可复活/越权）|
+| `ScheduleCacheIntegrationTest` | 4 | **Redis 号源缓存**：缓存真被写入 / 挂号失效 / 取消失效 / **缓存不参与扣减**（即使预热也不能超卖）|
+| `CacheDegradationIntegrationTest` | 3 | **缓存故障降级**：Redis 不可用时查排班仍 200、挂号仍成功且真的扣号，且不误伤其它缓存 |
 | **合计** | **124 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。
 这是"干净机器可复现"（N-04）的一部分。
 
-> ⚠️ **`PaymentTimeoutIntegrationTest` 是唯一需要真实 broker 的**（TTL 到期后的死信转发
-> 是 broker 行为，H2 + 桩测不出来）。它用独立 profile `mqtest`（TTL 改成 1 秒），
+> ⚠️ **需要真实 broker 的是两个类**：`PaymentTimeoutIntegrationTest` 与
+> `NotificationDeliveryIntegrationTest`（上表两行都标了）。本段此前写「唯一」是错的——
+> TTL 到期后的死信转发
+> 是 broker 行为，H2 + 桩测不出来）。它用独立 profile `mqtest`（TTL 改成 **2 秒**，见 `application-mqtest.yml` 的 `payment-ttl-millis: 2000`），
 > 并用 `Assumptions` **探测 broker：不可达时跳过而不是失败**——
 > 这样没有 broker 的机器跑全量测试依然全绿。
 > 但跳过会打印明确提示，**不静默**：静默跳过会让人以为功能测过了。

@@ -82,14 +82,17 @@ D:\xmdeepseek\hospital-appointment。
 - ✅ **两次反向验证**：植入"先查再改"后，H2 测试报 `expected 20 but was 64`；
   MySQL 验证程序的对照组报超卖 63 个
 
-### T-017 Nginx 部署配置 🟡（配置已完成并验证）
+### T-017 Nginx 部署配置 ✅
 
 - `deploy/nginx/nginx.conf`（80）与 `nginx.8080.conf`（仅改端口），**完整可 `-c` 使用**
 - **8 项链路验证全通过**（真实 nginx + 真实后端）：首页 / 深层路由回退 / `/api` 代理 /
   `/health` / 登录经代理 / 业务查询经代理 / 未认证 401 / 不存在接口 404
 - ⚠️ **80 端口被 `Steam++.Accelerator` 占用** → 用 8080 版即可（两份只差一行）
 - ⚠️ 这次验证还抓到一个真 bug：**请求不存在的路径返回 500**（已修为 404）
-- ⬜ 等 T-013~T-016 的真前端接上后做最终验收
+- ✅ **最终验收已完成**：真前端早已接上，A-09 / A-10 均通过，
+  `scripts/verify-e2e.ps1` **22 项全通过**（经真实 Nginx）
+  > ⚠️ 这一行原先是 ⬜「等真前端接上后做最终验收」——而同一份文档后面就写着「端到端 22/22」，自相矛盾。
+  > 留一个 ⬜ 在这里的代价是：读的人会以为还有活没干。
 
 ### T-005 挂号状态机 ✅
 
@@ -288,8 +291,9 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 > 这是刻意设计：一个可预测的默认密钥意味着任何人都能自己签一个令牌冒充任意用户。
 > **启动失败比"用默认密钥默默跑起来"安全得多。**
 
-> 将来会做一个 `run-dev.ps1` 把这几行收起来（参考项目 1 的脚本，
-> ⚠️ 那个脚本**必须带 UTF-8 BOM**，否则 PowerShell 5.1 按 GBK 解码会报语法错）。
+> ✅ 已经有 `run-dev.ps1` 把这几行收起来了（参考项目 1 的脚本，
+> ⚠️ 脚本**必须带 UTF-8 BOM**，否则 PowerShell 5.1 按 GBK 解码会报语法错）。
+> 用法见上面「快速开始」的 `.\run-dev.ps1`。
 
 ---
 
@@ -353,7 +357,7 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 
 ```
 D:\xmdeepseek\                        ← DSH 工作区（开发环境）
-├── contract-review-platform\         ← 项目 1（已完成，280 测试）→ github.com/zbfm123/xm
+├── contract-review-platform\         ← 项目 1（已完成，297 测试）→ github.com/zbfm123/xm
 │   └── docs\RESTART-HERE.md
 └── hospital-appointment\             ← 项目 2（进行中）→ 待建 GitHub 仓库
     └── docs\START-HERE.md            ← 你正在读的文件

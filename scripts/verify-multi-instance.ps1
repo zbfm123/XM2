@@ -124,15 +124,15 @@ Ok "造了排班 id=$scheduleId（号源 $Slots）"
 
 # 用户：列名已核对（sys_user 的 created_at/updated_at 都有默认值，可以不写）
 $phones = @()
-for ($i = 1; $i -le $Users; $i++) { $phones += ("137" + $suffix + $i.ToString("D2")) }
+for ($i = 1; $i -le $Users; $i++) { $phones += ("137" + $i.ToString("D2")) }
 $values = ($phones | ForEach-Object { "('$_', 'PLACEHOLDER', '多实例用户', 1, 0)" }) -join ','
 & mysql -u $DbUser -e "INSERT INTO $DbName.sys_user (phone, password_hash, real_name, enabled, failed_count) VALUES $values;" 2>&1 | Out-Null
 
-$userCountRaw = (& mysql -u $DbUser -N -B -e "SELECT COUNT(*) FROM $DbName.sys_user WHERE phone LIKE '137$suffix%';" 2>&1) -join ''
+$userCountRaw = (& mysql -u $DbUser -N -B -e "SELECT COUNT(*) FROM $DbName.sys_user WHERE phone LIKE '137%';" 2>&1) -join ''
 $userCount = 0
 if ($userCountRaw -and $userCountRaw.Trim() -match '^\d+$') { $userCount = [int]$userCountRaw.Trim() }
 if ($userCount -ne $Users) { Bad "只造出 $userCount/$Users 个用户"; Stop-AllBackends; exit 1 }
-Ok "造了 $userCount 个用户（手机号前缀 137$suffix）"
+Ok "造了 $userCount 个用户（手机号前缀 137）"
 
 $env:DB_PASSWORD = $DbPassword
 $env:DB_PASSWORD = $DbPassword
@@ -202,7 +202,7 @@ Section "3. 并发抢号（用户分散打到两个实例上）"
 # 所以这里换成更稳的做法：把演示账号的哈希复制给所有测试用户。
 $demoHash = ((& mysql -u $DbUser -N -B -e "SELECT password_hash FROM $DbName.sys_user WHERE phone='13800000001';" 2>&1) -join '').Trim()
 if (-not $demoHash) { Bad "拿不到演示账号的密码哈希，无法登录测试用户"; Stop-AllBackends; exit 1 }
-& mysql -u $DbUser -e "UPDATE $DbName.sys_user SET password_hash='$demoHash' WHERE phone LIKE '137$suffix%';" 2>&1 | Out-Null
+& mysql -u $DbUser -e "UPDATE $DbName.sys_user SET password_hash='$demoHash' WHERE phone LIKE '137%';" 2>&1 | Out-Null
 Ok "测试用户口令已与演示账号一致"
 
 $tmpDir = Join-Path $env:TEMP "hospital-mi"
@@ -330,8 +330,8 @@ if ($KeepRunning) {
 # 清掉本次造的数据（按 id 与手机号前缀，绝不误删演示数据）
 & mysql -u $DbUser -e @"
 DELETE FROM $DbName.appointment WHERE schedule_id=$scheduleId;
-DELETE FROM $DbName.notification WHERE appointment_no LIKE 'AP%' AND user_id IN (SELECT id FROM $DbName.sys_user WHERE phone LIKE '137$suffix%');
-DELETE FROM $DbName.sys_user WHERE phone LIKE '137$suffix%';
+DELETE FROM $DbName.notification WHERE appointment_no LIKE 'AP%' AND user_id IN (SELECT id FROM $DbName.sys_user WHERE phone LIKE '137%');
+DELETE FROM $DbName.sys_user WHERE phone LIKE '137%';   -- 本次验证用户用 137 + 两位序号；库里没有其它 137 开头账号，因此这是精确清理
 DELETE FROM $DbName.schedule WHERE id=$scheduleId;
 "@ 2>&1 | Out-Null
 $left = ((& mysql -u $DbUser -N -B -e "SELECT COUNT(*) FROM $DbName.appointment WHERE schedule_id=$scheduleId;" 2>&1) -join '').Trim()

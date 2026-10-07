@@ -75,6 +75,30 @@ public class CacheConfig implements CachingConfigurer {
      *
      * <p>不这么做的话，Redis 一挂，所有带 {@code @Cacheable} 的接口全部 500——
      * 而这恰恰是"缓存把系统搞挂"的经典事故。
+     *
+     * <h2>⚠️ 它保护的范围是有边界的（写测试时才发现）</h2>
+     *
+     * 写 {@code CacheDegradationIntegrationTest} 时，第一版让
+     * {@code CacheManager.getCache(name)} 直接抛异常，结果排班查询返回 <b>500</b>——
+     * 错误处理器没接住。查 Spring 的字节码才看清：
+     *
+     * <pre>
+     *   CacheErrorHandler.handleCacheGetError   <- 只在 findInCaches 里被调用
+     *   CacheErrorHandler.handleCachePutError   <- 出现 0 次
+     *   CacheErrorHandler.handleCacheEvictError <- 出现 0 次
+     * </pre>
+     *
+     * <p>也就是说：<b>它保护 cache.get()/put() 这类"操作"，
+     * 不保护 cacheManager.getCache() 这个"解析"阶段。</b>
+     * 解析阶段抛异常会直接冒到调用方。
+     *
+     * <p>好消息是真实 Redis 故障走的是<b>被保护的那条路</b>：
+     * {@code RedisCacheManager.getCache()} 只构造一个 {@code RedisCache} 对象、
+     * <b>不会去连 Redis</b>（连接是惰性的），异常发生在 {@code cache.get(key)} 时。
+     *
+     * <p>但这提醒了一件事：<b>"降级"不是一个可以想当然的属性，
+     * 它在框架里是有具体边界的。</b>想确认它在哪，只能写测试把它跑出来——
+     * 这也正是 {@code CacheDegradationIntegrationTest} 存在的理由。
      */
     @Override
     public CacheErrorHandler errorHandler() {

@@ -423,7 +423,7 @@ mvn test
 | `ConcurrentCancelIntegrationTest` | 2 | **取消的并发竞态**：用户取消与超时取消同时发生，状态只变一次、号源恰好归还一次 |
 | `ConcurrentIdempotencyIntegrationTest` | 2 | **幂等的并发边界**：8 个并发请求只扣 1 个号源（防号源泄漏）|
 | `AppointmentLifecycleIntegrationTest` | 8 | **状态机在接口层真的能走完**（支付/完成/终态不可复活/越权）|
-| **合计** | **121 个，全绿** | |
+| **合计** | **124 个，全绿** | |
 
 **默认不依赖本机 MySQL / Redis / RabbitMQ**：测试用 H2 内存库（`MODE=MySQL`）+
 内存版 Redis 实现 + MQ 默认关闭（`NoopNotifier`），任何人 clone 下来 `mvn test` 就能跑。
@@ -623,7 +623,7 @@ curl.exe -u guest:guest -X DELETE "http://localhost:15672/api/queues/%2F/appoint
 | **支付是模拟的** | 没有第三方对接 |
 | **没有管理端** | 数据靠 SQL 预置，属主动范围决策（管理端最耗时、零技术深度） |
 | **未做鉴权细分** | 只有"登录用户"一种角色，**没有 RBAC** |
-| ~~Redis 引入了但没用上~~ | ✅ **已真实使用**（2026-10-07）：号源查询走 Redis 缓存（Cache-Aside），扣减/归还时失效，缓存故障自动降级为直查数据库。详见 `docs/02-architecture.md` 的"关于 Redis"一节 |
+| ~~Redis 引入了但没用上~~ | ✅ **已真实使用**（2026-10-07）：号源查询走 Redis 缓存（Cache-Aside），扣减/归还时失效，**缓存故障自动降级为直查数据库（有测试）**。详见 `docs/02-architecture.md` 的"关于 Redis"一节 |
 | **未做压测** | 并发测试验证的是**正确性**（不超卖），**不是吞吐量。不要声称高并发** |
 | **登录限流只按账号** | 不按 IP。撞库攻击每个账号只失败一两次不会被锁（按 IP 的滑动窗口才需要 Redis）|
 | **消息在事务提交前发出** | 存在极小窗口：消息已投递但事务回滚。彻底解决要本地消息表 |

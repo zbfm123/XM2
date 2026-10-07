@@ -52,7 +52,7 @@
 | 用途 | **号源查询结果缓存**（`ScheduleService.listByDoctor`）|
 | 缓存键 | `{#doctorId, #from, #to, #page, #size}`（Spring Cache 数组 key）|
 | 失效时机 | 挂号 / 取消 / 超时取消（三处都会改号源）|
-| 故障行为 | **降级为直查数据库**，功能不受影响 |
+| 故障行为 | **降级为直查数据库**，功能不受影响（✅ 有测试：`CacheDegradationIntegrationTest` 3 个用例）|
 
 **为什么选号源查询做缓存点**：**读多写少**——所有人都在查排班，只有挂号/取消时才写。
 这是缓存最经典的适用条件。

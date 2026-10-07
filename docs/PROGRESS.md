@@ -12,7 +12,7 @@
 | 阶段 | **Day 1 ~ Day 3 主体全部完成**（T-001 ~ T-017；仅剩 T-019 收尾） |
 | 当前任务 | **T-019 文档定稿**（其余任务已完成；T-018 压测按文档主动砍掉） |
 | 截止 | **2026-10-07** |
-| 测试 | **121 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
+| 测试 | **124 个，全绿**（`mvn test`，H2 内存库，默认不依赖本机 MySQL/Redis/RabbitMQ） |
 | 最后验证 | 2026-10-05：`scripts/verify-e2e.ps1` **18 项全通过**（A-09 + A-10，经真实 Nginx）；A-07 用**真 broker 停机**验证 8 项全通过 |
 | 环境 | MySQL / Redis / RabbitMQ **三者均可用**（RabbitMQ 待服务化，见下） |
 
@@ -120,6 +120,55 @@ powershell -ExecutionPolicy Bypass -File D:\xmdeepseek\hospital-appointment\scri
 ---
 
 ## 已完成
+
+### 2026-10-07：补上缓存故障降级的测试（并撞出 Spring Cache 的真实边界）
+
+**为什么必须补**：`CacheErrorHandler` 之前只是**实现了、没有任何测试证明**
+"Redis 挂了业务仍正常"。而引入缓存的同时就引入了一个新的单点——
+**没有测试的降级等于没有降级。**
+
+新增 `CacheDegradationIntegrationTest`（3 个用例）：
+
+| 用例 | 断言 |
+| --- | --- |
+| 排班缓存不可用时查排班 | HTTP 200，数据正确（降级为直查数据库）|
+| 排班缓存不可用时挂号 | HTTP 200，且**号源真的扣掉**（4）|
+| 防假绿 | 确认降级确实被触发，且**只坏一个依赖**、没把整个应用打坏 |
+
+#### ⚠️ 写这个测试时撞出一个值得知道的事实
+
+**第一版模拟错了，而错误本身比测试更有价值。**
+
+第一版让 `CacheManager.getCache(name)` 直接抛异常，结果排班查询返回 **500**——
+错误处理器没接住。查 Spring 的字节码才看清：
+
+```
+CacheErrorHandler.handleCacheGetError   <- 只在 findInCaches 里被调用
+CacheErrorHandler.handleCachePutError   <- 出现 0 次
+CacheErrorHandler.handleCacheEvictError <- 出现 0 次
+```
+
+也就是说：**它保护 `cache.get()/put()` 这类"操作"，
+不保护 `cacheManager.getCache()` 这个"解析"阶段**——解析阶段抛异常会直接冒到调用方。
+
+**那真实 Redis 挂掉是哪一种？是被保护的那一种**：
+`RedisCacheManager.getCache()` 只构造一个 `RedisCache` 对象、**不会去连 Redis**
+（连接是惰性的），异常发生在 `cache.get(key)` 时。
+
+所以：**模拟故障必须模拟到真实的那一层**，否则测出来的结论是错的。
+改成"解析成功、读的时候失败"之后，才真正测到我们想要的降级路径。
+
+#### 另一个坑
+
+第一版 mock 对**所有** cache 名都抛异常，把 **Spring Security 自身的缓存**也打坏了
+（返回 401/500）。**"模拟某个依赖故障"必须精确到那一个依赖。**
+
+这个边界已写进 `CacheConfig` 的注释，结论是：
+**"降级"不是一个可以想当然的属性，它在框架里是有具体范围的；
+想确认它在哪，只能写测试把它跑出来。**
+
+测试：121 → **124** 个，全绿。
+
 
 ### 2026-10-05：任务书与代码对齐（T-019 标记完成 + 多处过时数字）
 
@@ -680,7 +729,7 @@ $env:APP_MQ_PAYMENT_TTL_MILLIS='3000'                 # 3 秒
 
 改用 **`purgeQueue`（清空消息，保留队列）**，而不是 `deleteQueue`。
 
-连续跑 3 次整类，全部通过（26 秒左右）；全量 121 个测试稳定全绿。
+连续跑 3 次整类，全部通过（26 秒左右）；全量 124 个测试稳定全绿。
 
 > **教训（值得记住）**：
 > **"清理干净"和"把东西删掉"不是一回事。**
@@ -1157,7 +1206,7 @@ expected: 9
 | 脚本 | 作用 |
 | --- | --- |
 | `run-dev.ps1` | 一键启动后端；先检查 JDK/Maven/MySQL/Redis/RabbitMQ 与端口，缺什么就说清楚；`-CheckOnly` 只检查不启动 |
-| `run-all-tests.ps1` | 一键跑完 121 个测试 + 真实 MySQL 并发验证 + 前端构建，并打印汇总 |
+| `run-all-tests.ps1` | 一键跑完 124 个测试 + 真实 MySQL 并发验证 + 前端构建，并打印汇总 |
 | `scripts/start-nginx.ps1` | 启动/停止 Nginx；自动按端口选配置、检查产物与后端、检查语法、打印访问地址 |
 
 三个脚本都带 UTF-8 BOM 并**实测通过**。实现时刻意避开两个已踩过的坑：

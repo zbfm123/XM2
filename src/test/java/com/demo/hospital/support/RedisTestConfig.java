@@ -112,4 +112,36 @@ public class RedisTestConfig {
     public static void clear() {
         STORE.clear();
     }
+
+    /**
+     * 测试用的 {@link org.springframework.cache.CacheManager}：进程内缓存。
+     *
+     * <h2>为什么必须在这里提供</h2>
+     *
+     * 生产/开发环境什么都不用做——Spring Boot 会按 classpath 上的 Redis 自动配置出
+     * {@code RedisCacheManager}。但 <b>测试配置排除了 Redis 自动配置</b>
+     * （见 {@code application-test.yml}，为的是"干净机器 clone 下来 mvn test 就能全绿"），
+     * 于是容器里**没有任何 CacheManager**。
+     *
+     * <p>而 {@code @EnableCaching} 一旦打开，带 {@code @Cacheable} 的方法就需要一个
+     * CacheManager —— 没有的话**上下文启动直接失败**：
+     * <pre>
+     * No qualifying bean of type 'org.springframework.cache.CacheManager' available
+     * </pre>
+     *
+     * <p>所以这里补一个进程内实现。刻意<b>不</b>把它放进生产配置：
+     * 用户声明的 CacheManager 会让 Redis 自动配置主动退让
+     * （{@code @ConditionalOnMissingBean(CacheManager)}），
+     * 结果是生产环境**悄悄退化成进程内缓存而表面正常**。
+     *
+     * <p>⚠️ 注意它和上面那个 {@code StringRedisTemplate} mock 是**两回事**：
+     * 那个是给直接调 {@code RedisTemplate} 的代码用的，
+     * 这个是给 Spring Cache 抽象用一个。本项目现在两条路都没有业务代码在用，
+     * 但缓存这条已经真实接入（{@code ScheduleService}）。
+     */
+    @Bean
+    public org.springframework.cache.CacheManager cacheManager() {
+        return new org.springframework.cache.concurrent.ConcurrentMapCacheManager(
+                com.demo.hospital.config.CacheConfig.SCHEDULE_CACHE);
+    }
 }

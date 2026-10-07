@@ -3,6 +3,7 @@ package com.demo.hospital;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.cache.annotation.EnableCaching;
 
 /**
  * 医院预约挂号系统。
@@ -17,6 +18,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan
+@EnableCaching
 public class HospitalApplication {
 
     public static void main(String[] args) {

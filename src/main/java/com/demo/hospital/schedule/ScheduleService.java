@@ -17,6 +17,11 @@ import java.util.List;
  *
  * <p>⚠️ <b>本类只读号源，绝不修改它。</b>扣减属于 T-006，且必须是一条原子 UPDATE。
  * 在这个只读任务里，{@code remainingSlots} 的唯一作用是展示。
+ *
+ * <p><b>查询结果走 Redis 缓存</b>（见 {@link com.demo.hospital.config.CacheConfig}）。
+ * 选它做缓存点是因为"读多写少"——所有人都在查排班，只有挂号/取消时才写。
+ * ⚠️ 但缓存<b>不参与扣减</b>：能不能挂上号由数据库那条原子 UPDATE 决定，
+ * 所以缓存再旧也不可能多卖一个号。
  */
 @Service
 public class ScheduleService {
@@ -43,6 +48,9 @@ public class ScheduleService {
      * <p>医生不存在时抛 404 而不是返回空页——理由与科室相同（见 {@code DoctorService}）：
      * "医生不存在"和"医生没排班"对用户的意义完全不同。
      */
+@org.springframework.cache.annotation.Cacheable(
+            cacheNames = com.demo.hospital.config.CacheConfig.SCHEDULE_CACHE,
+            key = "{#doctorId, #from, #to, #page, #size}")
     public PageResult<ScheduleView> listByDoctor(Long doctorId, LocalDate from, LocalDate to,
                                                  int page, int size) {
         if (doctorMapper.selectById(doctorId) == null) {

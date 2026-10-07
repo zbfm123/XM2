@@ -88,6 +88,26 @@ public class AppointmentService {
      * @param paymentTimeoutMinutes 待支付超时分钟数（支持小数）；≤0 时用默认值
      */
     @Transactional(noRollbackFor = BusinessException.class)
+// ⚠️ 失效缓存的理由：这三个方法都会改变号源数量（扣减或归还），
+    //    而号源查询结果正被 Redis 缓存。不失效的话，用户会一直看到旧号源数字。
+    //
+    // 为什么用 allEntries = true（清空整个排班缓存）而不是精确删某一个医生：
+    // 这里是按 scheduleId 操作的，而缓存键是按 doctorId 组织的——
+    // **需要多一次查库才能知道该删哪个医生**，为一次失效多查一次库不划算。
+    // 排班数据量小（本演示库 140 条），整体清空的代价可以接受。
+    //
+    // ⚠️ 这个取舍要能说出来：如果排班量很大（比如几十万条），
+    //    整体清空会导致缓存频繁被清、命中率暴跌，那时就应该换成
+    //    "按医生精确失效"（代价是多一次查询）。**缓存粒度是跟着数据量走的。**
+    //
+    // ⚠️ @CacheEvict 默认在方法**成功返回后**执行。这三个方法都是 @Transactional 的，
+    //    而 Spring 会按"事务通知在前、缓存通知在后"的顺序执行 ——
+    //    因此失效发生在**事务提交之后**。这个顺序很重要：
+    //    如果先失效后提交，那么在"已失效但还没提交"的窗口里，
+    //    别的请求会把**旧值**重新读进缓存，缓存又被污染了。
+    @org.springframework.cache.annotation.CacheEvict(
+            cacheNames = com.demo.hospital.config.CacheConfig.SCHEDULE_CACHE,
+            allEntries = true)
     public AppointmentView book(Long userId, Long scheduleId, String idempotencyKey,
                                 double paymentTimeoutMinutes) {
 
@@ -239,6 +259,26 @@ public class AppointmentService {
      * 但这里<b>不允许</b>——见方法内的说明。
      */
     @Transactional(noRollbackFor = BusinessException.class)
+// ⚠️ 失效缓存的理由：这三个方法都会改变号源数量（扣减或归还），
+    //    而号源查询结果正被 Redis 缓存。不失效的话，用户会一直看到旧号源数字。
+    //
+    // 为什么用 allEntries = true（清空整个排班缓存）而不是精确删某一个医生：
+    // 这里是按 scheduleId 操作的，而缓存键是按 doctorId 组织的——
+    // **需要多一次查库才能知道该删哪个医生**，为一次失效多查一次库不划算。
+    // 排班数据量小（本演示库 140 条），整体清空的代价可以接受。
+    //
+    // ⚠️ 这个取舍要能说出来：如果排班量很大（比如几十万条），
+    //    整体清空会导致缓存频繁被清、命中率暴跌，那时就应该换成
+    //    "按医生精确失效"（代价是多一次查询）。**缓存粒度是跟着数据量走的。**
+    //
+    // ⚠️ @CacheEvict 默认在方法**成功返回后**执行。这三个方法都是 @Transactional 的，
+    //    而 Spring 会按"事务通知在前、缓存通知在后"的顺序执行 ——
+    //    因此失效发生在**事务提交之后**。这个顺序很重要：
+    //    如果先失效后提交，那么在"已失效但还没提交"的窗口里，
+    //    别的请求会把**旧值**重新读进缓存，缓存又被污染了。
+    @org.springframework.cache.annotation.CacheEvict(
+            cacheNames = com.demo.hospital.config.CacheConfig.SCHEDULE_CACHE,
+            allEntries = true)
     public AppointmentView cancel(Long userId, String appointmentNo, String reason) {
         Appointment appointment = appointmentMapper.findByNoAndUser(appointmentNo, userId);
         if (appointment == null) {
@@ -354,6 +394,26 @@ public class AppointmentService {
      * @return {@code true} = 本次确实取消了；{@code false} = 订单已不是待支付（什么都不做）
      */
     @Transactional(noRollbackFor = BusinessException.class)
+// ⚠️ 失效缓存的理由：这三个方法都会改变号源数量（扣减或归还），
+    //    而号源查询结果正被 Redis 缓存。不失效的话，用户会一直看到旧号源数字。
+    //
+    // 为什么用 allEntries = true（清空整个排班缓存）而不是精确删某一个医生：
+    // 这里是按 scheduleId 操作的，而缓存键是按 doctorId 组织的——
+    // **需要多一次查库才能知道该删哪个医生**，为一次失效多查一次库不划算。
+    // 排班数据量小（本演示库 140 条），整体清空的代价可以接受。
+    //
+    // ⚠️ 这个取舍要能说出来：如果排班量很大（比如几十万条），
+    //    整体清空会导致缓存频繁被清、命中率暴跌，那时就应该换成
+    //    "按医生精确失效"（代价是多一次查询）。**缓存粒度是跟着数据量走的。**
+    //
+    // ⚠️ @CacheEvict 默认在方法**成功返回后**执行。这三个方法都是 @Transactional 的，
+    //    而 Spring 会按"事务通知在前、缓存通知在后"的顺序执行 ——
+    //    因此失效发生在**事务提交之后**。这个顺序很重要：
+    //    如果先失效后提交，那么在"已失效但还没提交"的窗口里，
+    //    别的请求会把**旧值**重新读进缓存，缓存又被污染了。
+    @org.springframework.cache.annotation.CacheEvict(
+            cacheNames = com.demo.hospital.config.CacheConfig.SCHEDULE_CACHE,
+            allEntries = true)
     public boolean cancelOnTimeout(String appointmentNo, String reason) {
         Appointment appointment = appointmentMapper.findByNo(appointmentNo);
         if (appointment == null) {

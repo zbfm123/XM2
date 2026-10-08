@@ -64,6 +64,29 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *       漏了归还，号源就会凭空少一个，表现为"系统性地丢号"，
  *       而且**不会有任何报错**</li>
  * </ol>
+ *
+ * <h2>⚠️ 已知问题：本类在全量跑时会偶发失败（2026-10-07 记录）</h2>
+ *
+ * 现象：全量 `mvn test` **大约三分之一的概率失败**，
+ * 但单独跑这个类（`-Dtest=ConcurrentIdempotencyIntegrationTest`）**连跑 5 次全过**。
+ *
+ * <p>失败的是上面没列的第四条断言：
+ * “并发重复提交不该以 500 收场”——
+ * 八个并发请求里**有一个返回了非 appointmentNo 的响应**（实测 failures: 1）。
+ *
+ * <p><b>根因很可能在测试手段而不在业务代码</b>：
+ * MockMvc 是围绕单线程设计的（内部用 TestDispatcherServlet 与一些共享状态），
+ * 从多个线程同时 perform() 并不是它的设计用途。
+ *
+ * <p>⚠️ **这不影响防超卖结论**：那一条由另外四处**确定性**证据守着：
+ * ScheduleConcurrencyTest（多线程直接打 Service/SQL）1000 线程抢 20 号）、
+ * ConcurrentBookingHttpIntegrationTest、scripts/verify-multi-instance.ps1
+ * （真实 MySQL + 两个进程共库）、scripts/verify-concurrency-on-mysql.ps1。
+ * 而且本次失败的那一次，**上面三条断言仍然是通过的**。
+ *
+ * <p><b>待办</b>：把并发请求改成走真实端口（TestRestTemplate + RANDOM_PORT）
+ * 而不是 MockMvc；并在失败分支里把响应体打印出来（目前只记数、不记内容，
+ * 所以只能知道“有一个非 200”而不知道是什么）。
  */
 @SpringBootTest
 @AutoConfigureMockMvc

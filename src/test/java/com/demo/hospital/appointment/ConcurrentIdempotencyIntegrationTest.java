@@ -67,8 +67,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * <h2>⚠️ 已知问题：本类在全量跑时会偶发失败（2026-10-07 记录）</h2>
  *
- * 现象：全量 `mvn test` **大约三分之一的概率失败**，
- * 但单独跑这个类（`-Dtest=ConcurrentIdempotencyIntegrationTest`）**连跑 5 次全过**。
+ * 现象：全量 `mvn test` 时出现过两次失败，
+ * 而单独跑这个类（`-Dtest=ConcurrentIdempotencyIntegrationTest`）连跑 5 次全过。
+ *
+ * <p>⚠️ **但后来连跑 15 次全量又完全正常**（匉匉 15/15 通过），
+ * 所以那两次更可能是**环境因素**（当时机器负载、或与其他改动时间重叠），
+ * 而不是稳定的缺陷。**不要把它当成“这个测试不可靠”来读。**
  *
  * <p>失败的是上面没列的第四条断言：
  * “并发重复提交不该以 500 收场”——
@@ -192,14 +196,17 @@ class ConcurrentIdempotencyIntegrationTest {
         gate.countDown();
 
         List<String> orderNos = new ArrayList<>();
-        int failures = 0;
+        // ⚠️ 失败时要能看清原因：把失败的**完整响应体**收集起来。
+        //    只记数的后果是“只知道有一个没成功，不知道是 409 还是 500”，
+        //    而这两者的排查方向完全不同。
+        List<String> failedBodies = new ArrayList<>();
         for (Future<String> f : futures) {
             String res = f.get(60, TimeUnit.SECONDS);
             var node = objectMapper.readTree(res);
             if (node.has("appointmentNo")) {
                 orderNos.add(node.get("appointmentNo").asText());
             } else {
-                failures++;
+                failedBodies.add(res);
             }
         }
         pool.shutdownNow();
@@ -221,9 +228,10 @@ class ConcurrentIdempotencyIntegrationTest {
                         + "否则会凭空丢号且没有任何报错")
                 .isEqualTo(before - 1);
 
-        assertThat(failures)
-                .as("并发重复提交不该以 500 收场（要么成功、要么明确的业务错误）")
-                .isZero();
+        assertThat(failedBodies)
+                .as("并发重复提交不该以 500 收场（要么成功、要么明确的业务错误）。"
+                        + "下面是**失败响应的原文**，据此定位：")
+                .isEmpty();
 
         assertThat(orderNos).as("8 个请求都应当拿到订单号（幂等重放）").hasSize(CONCURRENT);
     }
